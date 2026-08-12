@@ -2,7 +2,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import { env } from './env.js';
 import { pool } from './db.js';
-import { getAnios, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
+import { getAnios, getAsesores, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import type { BaseDatos, FiltrosResumen } from './types.js';
 
@@ -21,7 +21,7 @@ function parseFiltros(req: Request): FiltrosResumen {
   const anio = Number(q.anio);
   return {
     base: parseBase(q.base),
-    cliente: typeof q.cliente === 'string' && q.cliente && q.cliente.toLowerCase() !== 'todos' ? q.cliente : null,
+    asesor: typeof q.asesor === 'string' && q.asesor && q.asesor.toLowerCase() !== 'todos' ? q.asesor : null,
     anio: Number.isInteger(anio) ? anio : new Date().getFullYear(),
     mes: q.mes != null && q.mes !== '' ? Number(q.mes) : null,
   };
@@ -42,8 +42,8 @@ app.get('/resumen-ventas', wrap(async (req, res) => {
   res.json(await getResumenVentas(parseFiltros(req)));
 }));
 
-app.get('/clientes', wrap(async (_req, res) => {
-  res.json(await getClientes());
+app.get('/asesores', wrap(async (_req, res) => {
+  res.json(await getAsesores());
 }));
 
 app.get('/anios', wrap(async (_req, res) => {

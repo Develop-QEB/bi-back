@@ -37,7 +37,7 @@ function where(anio: number, f: FiltrosResumen, opts: { conMes?: boolean } = {})
   const params: Record<string, unknown> = { anio };
   const b = baseSql(f.base);
   if (b) { cond.push('UPPER(`BASE`) = :base'); params.base = b; }
-  if (f.cliente) { cond.push('`U_Cliente` = :cliente'); params.cliente = f.cliente; }
+  if (f.asesor) { cond.push('`U_Asesor` = :asesor'); params.asesor = f.asesor; }
   if (opts.conMes && f.mes) { cond.push('`Mes` = :mes'); params.mes = f.mes; }
   if (env.ventaDef === 'VENTA') cond.push("`U_dscTAsig` = 'Venta'");
   return { sql: cond.join(' AND '), params };
@@ -73,12 +73,14 @@ async function ventasPorCatorcenaMap(anio: number, f: FiltrosResumen): Promise<M
  * que pasaron a ventas esa semana. Lee de QEB.
  *
  * Respeta los filtros: `anio` (YEAR de la fecha del pase), `base` (sap_database) y
- * `cliente` (razon_social). La ventana ya NO se ancla a "hoy": toma las últimas
+ * `asesor` (solicitud.asesor). La ventana ya NO se ancla a "hoy": toma las últimas
  * HIST_N_SEM semanas con datos del propio año, para que cambiar de año funcione.
+ * OJO: solicitud.asesor viene más sucio que U_Asesor (alias/variantes del mismo
+ * nombre), así que el match exacto puede dejar corta la weekly para algún asesor.
  */
 async function ventasPorSemanaPase(f: FiltrosResumen) {
-  const rows = await query<{ pid: number; fecha_hora: string; detalles: string; inversion: string; base: string | null; cliente: string | null }>(
-    `SELECT h.ref_id pid, h.fecha_hora, h.detalles, pr.inversion, s.sap_database base, s.razon_social cliente
+  const rows = await query<{ pid: number; fecha_hora: string; detalles: string; inversion: string; base: string | null; asesor: string | null }>(
+    `SELECT h.ref_id pid, h.fecha_hora, h.detalles, pr.inversion, s.sap_database base, s.asesor asesor
        FROM historial h
        JOIN propuesta pr ON pr.id = h.ref_id
        LEFT JOIN solicitud s ON s.id = pr.solicitud_id
@@ -99,7 +101,7 @@ async function ventasPorSemanaPase(f: FiltrosResumen) {
     } catch { /* detalles no-JSON */ }
     if (!ok) continue;
     if (baseF && !String(r.base ?? '').toUpperCase().includes(baseF)) continue;
-    if (f.cliente && r.cliente !== f.cliente) continue;
+    if (f.asesor && r.asesor !== f.asesor) continue;
     const fecha = new Date(r.fecha_hora);
     const ts = fecha.getTime();
     const prev = porProp.get(r.pid);
@@ -181,12 +183,12 @@ export async function getResumenVentas(f: FiltrosResumen): Promise<ResumenVentas
   };
 }
 
-/** Lista de clientes distintos (para el filtro del front). */
-export async function getClientes(): Promise<string[]> {
-  const rows = await query<{ c: string }>(
-    "SELECT DISTINCT `U_Cliente` c FROM V_APS_Globales WHERE `U_Cliente` IS NOT NULL AND `U_Cliente` <> '' AND `U_Cliente` <> '0' ORDER BY `U_Cliente`"
+/** Lista de asesores distintos (para el filtro del front). Columna `U_Asesor`. */
+export async function getAsesores(): Promise<string[]> {
+  const rows = await query<{ a: string }>(
+    "SELECT DISTINCT `U_Asesor` a FROM V_APS_Globales WHERE `U_Asesor` IS NOT NULL AND `U_Asesor` <> '' AND `U_Asesor` <> '0' ORDER BY `U_Asesor`"
   );
-  return rows.map((r) => r.c);
+  return rows.map((r) => r.a);
 }
 
 /** Años con datos (para el filtro). */
