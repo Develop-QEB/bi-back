@@ -7,7 +7,18 @@ import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.servic
 import type { BaseDatos, FiltrosResumen } from './types.js';
 
 const app = express();
-app.use(cors({ origin: env.corsOrigin }));
+// CORS: la lista de CORS_ORIGIN (para prod) + cualquier localhost/127.0.0.1 en dev,
+// sin importar el puerto. Así abrir el front por localhost o por 127.0.0.1 funciona igual.
+app.use(
+  cors({
+    origin(origin, cb) {
+      if (!origin) return cb(null, true); // curl/Postman/same-origin
+      if (env.corsOrigin.includes(origin)) return cb(null, true);
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+      cb(new Error(`CORS: origen no permitido (${origin})`));
+    },
+  })
+);
 app.use(express.json());
 
 const BASES = new Set<BaseDatos>(['CIMU', 'Trade', 'SAP']);
@@ -32,6 +43,14 @@ const wrap =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
   (req: Request, res: Response, next: NextFunction) =>
     fn(req, res).catch(next);
+
+app.get('/', (_req, res) =>
+  res.json({
+    service: 'bi-back',
+    ok: true,
+    endpoints: ['/health', '/resumen-ventas', '/asesores', '/anios', '/presupuesto'],
+  })
+);
 
 app.get('/health', wrap(async (_req, res) => {
   await pool.query('SELECT 1');

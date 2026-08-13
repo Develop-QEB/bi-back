@@ -1,0 +1,36 @@
+# Blueprint de Render para bi-back.
+# En Render: New > Blueprint > apunta a este repo. Los valores marcados sync:false
+# se ponen en el dashboard (son secretos: credenciales de la BD).
+services:
+  - type: web
+    name: qeb-bi-back
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Origen permitido por CORS = el front en producción.
+      - key: CORS_ORIGIN
+        value: https://bi.qeb.mx
+      - key: VENTA_DEF
+        value: TOTAL
+      # Solo lectura: NO crear la tabla bi_presupuesto en prod sin OK.
+      - key: BI_ALLOW_CREATE
+        value: "false"
+      # --- Conexión a la BD (secretos → se ponen en el dashboard) ---
+      - key: DB_HOST
+        sync: false
+      - key: DB_PORT
+        value: "25060"
+      - key: DB_USER
+        sync: false
+      - key: DB_PASSWORD
+        sync: false
+      - key: DB_NAME
+        value: u658050396_QEB
+      - key: DB_SSL
+        value: "true"

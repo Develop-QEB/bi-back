@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "description": "Backend del BI de QEB — sirve /resumen-ventas leyendo V_APS_Globales (QEB, solo lectura) + presupuesto editable.",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
