@@ -8,6 +8,8 @@ export interface FiltrosResumen {
   base: BaseDatos | null;
   /** Nombre del asesor comercial (columna `U_Asesor`); null = todos */
   asesor: string | null;
+  /** Nombre del cliente (columna `U_Cliente`); null = todos */
+  cliente: string | null;
   anio: number;
   mes: number | null;
 }
@@ -28,6 +30,8 @@ export interface VentaSemana {
 
 export interface VentaCatorcena {
   catorcena: number;
+  /** Mes (1–12) al que pertenece la catorcena, derivado de la columna `Mes`. */
+  mes: number;
   etiqueta: string;
   aps: number;
   anioAnterior: number;

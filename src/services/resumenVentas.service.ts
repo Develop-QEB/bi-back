@@ -13,17 +13,7 @@ import { MESES_ES, type FiltrosResumen, type Kpi, type ResumenVentas } from '../
  *  - Año anterior: sale de la misma vista filtrando `Año`=anio−1 (hoy solo hay 2026 → 0).
  */
 
-const HIST_N_SEM = 6; // ventana de ventasPorSemana (pase a ventas), como Historico_Semanal
-
-// --- semanaIMU = ISO−1 (misma convención que Historico_Semanal) ---
-function isoWeek(d: Date): number {
-  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const day = t.getUTCDay() || 7;
-  t.setUTCDate(t.getUTCDate() + 4 - day);
-  const y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
-  return Math.ceil((((t as any) - (y0 as any)) / 86400000 + 1) / 7);
-}
-const semanaIMU = (d: Date): number => isoWeek(d) - 1;
+const HIST_N_SEM = 8; // ventana de ventasPorSemana: últimas N semanas con ventas
 
 /** null/'' -> sin filtro. 'Trade' -> 'TRADE'. */
 function baseSql(base: FiltrosResumen['base']): string | null {
@@ -38,6 +28,7 @@ function where(anio: number, f: FiltrosResumen, opts: { conMes?: boolean } = {})
   const b = baseSql(f.base);
   if (b) { cond.push('UPPER(`BASE`) = :base'); params.base = b; }
   if (f.asesor) { cond.push('`U_Asesor` = :asesor'); params.asesor = f.asesor; }
+  if (f.cliente) { cond.push('`U_Cliente` = :cliente'); params.cliente = f.cliente; }
   if (opts.conMes && f.mes) { cond.push('`Mes` = :mes'); params.mes = f.mes; }
   if (env.ventaDef === 'VENTA') cond.push("`U_dscTAsig` = 'Venta'");
   return { sql: cond.join(' AND '), params };
@@ -68,63 +59,71 @@ async function ventasPorCatorcenaMap(anio: number, f: FiltrosResumen): Promise<M
 }
 
 /**
- * ventasPorSemana = Historico_Semanal (pase a ventas por semana, últimas 6 semanas
- * CON datos del año filtrado). Total de la semana = SUM(inversion) de las propuestas
- * que pasaron a ventas esa semana. Lee de QEB.
- *
- * Respeta los filtros: `anio` (YEAR de la fecha del pase), `base` (sap_database) y
- * `asesor` (solicitud.asesor). La ventana ya NO se ancla a "hoy": toma las últimas
- * HIST_N_SEM semanas con datos del propio año, para que cambiar de año funcione.
- * OJO: solicitud.asesor viene más sucio que U_Asesor (alias/variantes del mismo
- * nombre), así que el match exacto puede dejar corta la weekly para algún asesor.
+ * Mapa catorcena -> mes (1–12) al que pertenece, según la columna `Mes` de la
+ * vista. Si una catorcena aparece en más de un mes (empalme), gana el mes con
+ * más renglones. Esto es lo que permite "iluminar lo relacionado" en el front:
+ * un mes agrupa varias catorcenas y viceversa.
  */
-async function ventasPorSemanaPase(f: FiltrosResumen) {
-  const rows = await query<{ pid: number; fecha_hora: string; detalles: string; inversion: string; base: string | null; asesor: string | null }>(
-    `SELECT h.ref_id pid, h.fecha_hora, h.detalles, pr.inversion, s.sap_database base, s.asesor asesor
-       FROM historial h
-       JOIN propuesta pr ON pr.id = h.ref_id
-       LEFT JOIN solicitud s ON s.id = pr.solicitud_id
-      WHERE h.tipo='Propuesta' AND h.accion='Cambio de estado'
-        AND h.detalles LIKE '%despues":"Pase a ventas"%'
-        AND YEAR(h.fecha_hora) = :anio`,
-    { anio: f.anio }
+async function catorcenaMesMap(anio: number, f: FiltrosResumen): Promise<Map<number, number>> {
+  const w = where(anio, f);
+  const rows = await query<{ catorcena: number; mes: number; n: number }>(
+    `SELECT CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(\`Periodo\`,' ',-1),'-',1) AS UNSIGNED) catorcena,
+            \`Mes\` mes, COUNT(*) n
+       FROM V_APS_Globales
+      WHERE ${w.sql} AND \`Periodo\` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %' AND \`Mes\` IS NOT NULL
+      GROUP BY catorcena, \`Mes\``,
+    w.params
   );
-  const baseF = f.base ? f.base.toUpperCase() : null;
-  // dedup por propuesta: se queda con el pase MÁS RECIENTE (por timestamp) del año.
-  const porProp = new Map<number, { semana: number; monto: number; ts: number }>();
+  const best = new Map<number, { mes: number; n: number }>();
   for (const r of rows) {
-    let ok = false;
-    try {
-      ok = (JSON.parse(r.detalles).cambios || []).some(
-        (c: any) => c.campo === 'Estado' && c.despues === 'Pase a ventas' && c.antes !== 'Pase a ventas'
-      );
-    } catch { /* detalles no-JSON */ }
-    if (!ok) continue;
-    if (baseF && !String(r.base ?? '').toUpperCase().includes(baseF)) continue;
-    if (f.asesor && r.asesor !== f.asesor) continue;
-    const fecha = new Date(r.fecha_hora);
-    const ts = fecha.getTime();
-    const prev = porProp.get(r.pid);
-    if (!prev || ts > prev.ts) porProp.set(r.pid, { semana: semanaIMU(fecha), monto: Number(r.inversion || 0), ts });
+    const c = Number(r.catorcena);
+    const mes = Number(r.mes);
+    if (!c || !mes) continue;
+    const prev = best.get(c);
+    if (!prev || Number(r.n) > prev.n) best.set(c, { mes, n: Number(r.n) });
   }
-  const porSemana = new Map<number, number>();
-  for (const p of porProp.values()) porSemana.set(p.semana, (porSemana.get(p.semana) ?? 0) + p.monto);
-  // últimas HIST_N_SEM semanas CON datos del año (no depende de la fecha de hoy).
-  return [...porSemana.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .slice(-HIST_N_SEM)
-    .map(([semana, monto]) => ({ semana, anio: f.anio, etiqueta: `Semana ${semana}-${f.anio}`, monto }));
+  return new Map([...best].map(([c, v]) => [c, v.mes]));
+}
+
+/**
+ * ventasPorSemana = venta real (Monto Total APS) agrupada por semana ISO-8601 de
+ * la columna `Fecha`, tomando las últimas HIST_N_SEM semanas CON ventas del año.
+ * Mide lo MISMO que el resto del tablero (Monto Total), a diferencia de la versión
+ * anterior que sumaba la inversión de "pase a ventas" del pipeline (otra métrica).
+ * `WEEK(Fecha, 3)` = ISO-8601 (semana inicia lunes; la semana 1 contiene el primer
+ * jueves). Respeta todos los filtros (base, asesor, cliente) vía `where`.
+ */
+async function ventasPorSemanaAPS(anio: number, f: FiltrosResumen) {
+  const w = where(anio, f);
+  const rows = await query<{ semana: number; monto: string }>(
+    `SELECT WEEK(\`Fecha\`, 3) semana, ${MONTO} monto
+       FROM V_APS_Globales
+      WHERE ${w.sql} AND \`Fecha\` IS NOT NULL
+      GROUP BY WEEK(\`Fecha\`, 3)
+      ORDER BY semana`,
+    w.params
+  );
+  return rows
+    .filter((r) => r.semana != null)
+    .map((r) => ({
+      semana: Number(r.semana),
+      anio,
+      etiqueta: `Semana ${Number(r.semana)}-${anio}`,
+      monto: Number(r.monto),
+    }))
+    .slice(-HIST_N_SEM);
 }
 
 export async function getResumenVentas(f: FiltrosResumen): Promise<ResumenVentas> {
   const anio = f.anio;
   const anioPrev = anio - 1;
 
-  const [mesAct, mesPrev, catAct, catPrev, ppto] = await Promise.all([
+  const [mesAct, mesPrev, catAct, catPrev, catMes, ppto] = await Promise.all([
     ventasPorMes(anio, f),
     ventasPorMes(anioPrev, f),
     ventasPorCatorcenaMap(anio, f),
     ventasPorCatorcenaMap(anioPrev, f),
+    catorcenaMesMap(anio, f),
     mapaPresupuesto(anio, f.base),
   ]);
 
@@ -144,13 +143,14 @@ export async function getResumenVentas(f: FiltrosResumen): Promise<ResumenVentas
   const catorcenas = [...new Set([...catAct.keys(), ...catPrev.keys()])].sort((a, b) => a - b);
   const ventasPorCatorcena = catorcenas.map((catorcena) => ({
     catorcena,
+    mes: catMes.get(catorcena) ?? 0,
     etiqueta: `CATORCENA ${String(catorcena).padStart(2, '0')}`,
     aps: catAct.get(catorcena) ?? 0,
     anioAnterior: catPrev.get(catorcena) ?? 0,
   }));
 
-  // --- ventas por semana = Historico_Semanal (pase a ventas por semana) ---
-  const ventasPorSemana = await ventasPorSemanaPase(f);
+  // --- ventas por semana = Monto Total APS por semana ISO ---
+  const ventasPorSemana = await ventasPorSemanaAPS(anio, f);
 
   // --- KPIs ---
   const totAps = [...mesAct.values()].reduce((a, b) => a + b, 0);
@@ -189,6 +189,14 @@ export async function getAsesores(): Promise<string[]> {
     "SELECT DISTINCT `U_Asesor` a FROM V_APS_Globales WHERE `U_Asesor` IS NOT NULL AND `U_Asesor` <> '' AND `U_Asesor` <> '0' ORDER BY `U_Asesor`"
   );
   return rows.map((r) => r.a);
+}
+
+/** Lista de clientes distintos (para el filtro del front). Columna `U_Cliente`. */
+export async function getClientes(): Promise<string[]> {
+  const rows = await query<{ c: string }>(
+    "SELECT DISTINCT `U_Cliente` c FROM V_APS_Globales WHERE `U_Cliente` IS NOT NULL AND `U_Cliente` <> '' AND `U_Cliente` <> '0' ORDER BY `U_Cliente`"
+  );
+  return rows.map((r) => r.c);
 }
 
 /** Años con datos (para el filtro). */

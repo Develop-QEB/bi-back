@@ -2,7 +2,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import { env } from './env.js';
 import { pool } from './db.js';
-import { getAnios, getAsesores, getResumenVentas } from './services/resumenVentas.service.js';
+import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import type { BaseDatos, FiltrosResumen } from './types.js';
 
@@ -33,6 +33,7 @@ function parseFiltros(req: Request): FiltrosResumen {
   return {
     base: parseBase(q.base),
     asesor: typeof q.asesor === 'string' && q.asesor && q.asesor.toLowerCase() !== 'todos' ? q.asesor : null,
+    cliente: typeof q.cliente === 'string' && q.cliente && q.cliente.toLowerCase() !== 'todos' ? q.cliente : null,
     anio: Number.isInteger(anio) ? anio : new Date().getFullYear(),
     mes: q.mes != null && q.mes !== '' ? Number(q.mes) : null,
   };
@@ -48,7 +49,7 @@ app.get('/', (_req, res) =>
   res.json({
     service: 'bi-back',
     ok: true,
-    endpoints: ['/health', '/resumen-ventas', '/asesores', '/anios', '/presupuesto'],
+    endpoints: ['/health', '/resumen-ventas', '/asesores', '/clientes', '/anios', '/presupuesto'],
   })
 );
 
@@ -63,6 +64,10 @@ app.get('/resumen-ventas', wrap(async (req, res) => {
 
 app.get('/asesores', wrap(async (_req, res) => {
   res.json(await getAsesores());
+}));
+
+app.get('/clientes', wrap(async (_req, res) => {
+  res.json(await getClientes());
 }));
 
 app.get('/anios', wrap(async (_req, res) => {
