@@ -1,5 +1,41 @@
 import { query } from '../db.js';
-import type { ConteoNombre, Embudo, EtapaEmbudo } from '../types.js';
+import type { ConteoMonto, ConteoNombre, Dimension, Embudo, EtapaEmbudo } from '../types.js';
+
+/** Columna de V_APS_Globales para cada dimensión. */
+const COL_DIM: Record<Dimension, string> = {
+  plaza: 'U_dscSitio',
+  digital: 'Tipo Digital',
+  asesor: 'U_Asesor',
+  cliente: 'U_Cliente',
+  mueble: 'Dscription',
+  categoria: 'U_Categoria',
+};
+
+export function dimensionValida(d: string): d is Dimension {
+  return d in COL_DIM;
+}
+
+/** Distribución de monto/caras por una dimensión, en un año. Ranking desc. */
+export async function getDistribucion(dim: Dimension, anio: number): Promise<ConteoMonto[]> {
+  const col = COL_DIM[dim];
+  const rows = await query<{ v: string | null; monto: string; caras: string | null; n: number }>(
+    `SELECT \`${col}\` v, SUM(\`Monto Total\`) monto, SUM(\`Caras\`) caras, COUNT(*) n
+       FROM V_APS_Globales
+      WHERE \`Año\` = :anio AND \`${col}\` IS NOT NULL
+      GROUP BY \`${col}\`
+      ORDER BY monto DESC
+      LIMIT 30`,
+    { anio }
+  );
+  return rows
+    .filter((r) => r.v != null && String(r.v).trim() && Number(r.monto) > 0)
+    .map((r) => ({
+      nombre: dim === 'mueble' ? String(r.v).replace(/^RENTA DE ESPACIOS\s*/i, '').trim() || String(r.v) : String(r.v).trim(),
+      monto: Number(r.monto),
+      caras: Number(r.caras) || 0,
+      n: Number(r.n),
+    }));
+}
 
 /**
  * Reportes agregados (SOLO SELECT). Por ahora: embudo de conversión

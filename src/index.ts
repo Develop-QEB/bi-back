@@ -6,7 +6,7 @@ import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getResumen } from './services/historial.service.js';
-import { getEmbudo } from './services/reportes.service.js';
+import { dimensionValida, getDistribucion, getEmbudo } from './services/reportes.service.js';
 import { attachRealtime } from './realtime.js';
 import type { BaseDatos, CategoriaAccion, FiltrosHistorial, FiltrosResumen } from './types.js';
 
@@ -116,6 +116,13 @@ app.get('/historial/contexto', wrap(async (req, res) => {
 // --- Reportes ---
 app.get('/reportes/embudo', wrap(async (_req, res) => {
   res.json(await getEmbudo());
+}));
+
+app.get('/reportes/distribucion', wrap(async (req, res) => {
+  const dim = String(req.query.dim ?? '');
+  if (!dimensionValida(dim)) return res.status(400).json({ error: 'dim inválida' });
+  const anio = Number(req.query.anio) || new Date().getFullYear();
+  res.json(await getDistribucion(dim, anio));
 }));
 
 // --- Presupuesto (meta editable — el lapicito) ---
