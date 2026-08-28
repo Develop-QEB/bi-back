@@ -28,7 +28,8 @@ function where(anio: number, f: FiltrosResumen, opts: { conMes?: boolean } = {})
   const b = baseSql(f.base);
   if (b) { cond.push('UPPER(`BASE`) = :base'); params.base = b; }
   if (f.asesor) { cond.push('`U_Asesor` = :asesor'); params.asesor = f.asesor; }
-  if (f.cliente) { cond.push('`U_Cliente` = :cliente'); params.cliente = f.cliente; }
+  // "Cliente" en el negocio = MARCA (APPLE, AEROMEXICO, SEARS…), no la razón social.
+  if (f.cliente) { cond.push('`U_Marca` = :cliente'); params.cliente = f.cliente; }
   if (opts.conMes && f.mes) { cond.push('`Mes` = :mes'); params.mes = f.mes; }
   if (env.ventaDef === 'VENTA') cond.push("`U_dscTAsig` = 'Venta'");
   return { sql: cond.join(' AND '), params };
@@ -191,10 +192,14 @@ export async function getAsesores(): Promise<string[]> {
   return rows.map((r) => r.a);
 }
 
-/** Lista de clientes distintos (para el filtro del front). Columna `U_Cliente`. */
+/**
+ * Lista de "clientes" para el filtro. En este negocio (medios/publicidad) el
+ * cliente que se busca es la MARCA (APPLE, AEROMEXICO, SEARS…), columna `U_Marca`,
+ * no la razón social (`U_Cliente`).
+ */
 export async function getClientes(): Promise<string[]> {
   const rows = await query<{ c: string }>(
-    "SELECT DISTINCT `U_Cliente` c FROM V_APS_Globales WHERE `U_Cliente` IS NOT NULL AND `U_Cliente` <> '' AND `U_Cliente` <> '0' ORDER BY `U_Cliente`"
+    "SELECT DISTINCT `U_Marca` c FROM V_APS_Globales WHERE `U_Marca` IS NOT NULL AND `U_Marca` <> '' AND `U_Marca` <> '0' ORDER BY `U_Marca`"
   );
   return rows.map((r) => r.c);
 }

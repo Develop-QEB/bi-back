@@ -1,10 +1,13 @@
+import http from 'node:http';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { env } from './env.js';
 import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
-import type { BaseDatos, FiltrosResumen } from './types.js';
+import { getEventos, getResumen } from './services/historial.service.js';
+import { attachRealtime } from './realtime.js';
+import type { BaseDatos, CategoriaAccion, FiltrosHistorial, FiltrosResumen } from './types.js';
 
 const app = express();
 // CORS: la lista de CORS_ORIGIN (para prod) + cualquier localhost/127.0.0.1 en dev,
@@ -15,6 +18,8 @@ app.use(
       if (!origin) return cb(null, true); // curl/Postman/same-origin
       if (env.corsOrigin.includes(origin)) return cb(null, true);
       if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true);
+      // El front vive en Vercel (bi-qeb.vercel.app) y en el dominio qeb.mx.
+      if (/^https:\/\/([a-z0-9-]+\.)*(vercel\.app|qeb\.mx)$/i.test(origin)) return cb(null, true);
       cb(new Error(`CORS: origen no permitido (${origin})`));
     },
   })
@@ -39,6 +44,23 @@ function parseFiltros(req: Request): FiltrosResumen {
   };
 }
 
+const CATEGORIAS: CategoriaAccion[] = ['eliminacion', 'autorizacion', 'rechazo', 'cambio_estado', 'asignacion', 'creacion', 'post_sap', 'otro'];
+function parseFiltrosHistorial(req: Request): FiltrosHistorial {
+  const q = req.query;
+  const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const cat = s(q.categoria);
+  return {
+    categoria: cat && (CATEGORIAS as string[]).includes(cat) ? (cat as CategoriaAccion) : null,
+    campaniaId: q.campaniaId ? Number(q.campaniaId) : null,
+    usuario: s(q.usuario),
+    tipo: s(q.tipo),
+    soloImpacto: q.soloImpacto === 'true' || q.soloImpacto === '1',
+    desde: s(q.desde),
+    hasta: s(q.hasta),
+    limit: q.limit ? Number(q.limit) : 100,
+  };
+}
+
 /** Envuelve un handler async y manda errores al middleware. */
 const wrap =
   (fn: (req: Request, res: Response) => Promise<unknown>) =>
@@ -49,7 +71,7 @@ app.get('/', (_req, res) =>
   res.json({
     service: 'bi-back',
     ok: true,
-    endpoints: ['/health', '/resumen-ventas', '/asesores', '/clientes', '/anios', '/presupuesto'],
+    endpoints: ['/health', '/resumen-ventas', '/asesores', '/clientes', '/anios', '/presupuesto', '/historial/eventos', '/historial/resumen', 'ws:/ws/historial'],
   })
 );
 
@@ -74,6 +96,16 @@ app.get('/anios', wrap(async (_req, res) => {
   res.json(await getAnios());
 }));
 
+// --- Historial de acciones ---
+app.get('/historial/eventos', wrap(async (req, res) => {
+  res.json(await getEventos(parseFiltrosHistorial(req)));
+}));
+
+app.get('/historial/resumen', wrap(async (req, res) => {
+  const f = parseFiltrosHistorial(req);
+  res.json(await getResumen({ desde: f.desde, hasta: f.hasta }));
+}));
+
 // --- Presupuesto (meta editable — el lapicito) ---
 app.get('/presupuesto', wrap(async (req, res) => {
   const anio = Number(req.query.anio) || new Date().getFullYear();
@@ -94,6 +126,8 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   res.status(500).json({ error: msg });
 });
 
-app.listen(env.port, () => {
+const server = http.createServer(app);
+attachRealtime(server);
+server.listen(env.port, () => {
   console.log(`🚀 bi-back en http://localhost:${env.port}  (CORS: ${env.corsOrigin.join(', ')})`);
 });

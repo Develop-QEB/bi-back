@@ -72,3 +72,76 @@ export interface PresupuestoMes {
 }
 
 export const MESES_ES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
+
+// ---------------- Historial de acciones ----------------
+
+export type CategoriaAccion =
+  | 'eliminacion'
+  | 'autorizacion'
+  | 'rechazo'
+  | 'cambio_estado'
+  | 'asignacion'
+  | 'creacion'
+  | 'post_sap'
+  | 'otro';
+
+/** Un evento del historial ya normalizado y legible. */
+export interface EventoHistorial {
+  id: number;
+  fecha: string; // ISO
+  tipo: string; // Campaña, Propuesta, autorizacion_aprobacion, ...
+  accion: string;
+  categoria: CategoriaAccion;
+  usuario: string | null; // quién lo hizo
+  refId: number | null;
+  campania: string | null; // nombre de campaña si aplica
+  /** Impacto en caras: negativo si quitó, positivo si agregó/aprobó, 0 si n/a. */
+  caras: number;
+  /** Delta en $ si el detalle lo trae (tarifa/inversión); si no, null. */
+  monto: number | null;
+  estadoAntes: string | null;
+  estadoDespues: string | null;
+  descripcion: string; // texto legible
+}
+
+export interface FiltrosHistorial {
+  categoria: CategoriaAccion | null;
+  campaniaId: number | null;
+  usuario: string | null;
+  tipo: string | null;
+  /** true = solo eventos que mueven caras (impacto ≠ 0). */
+  soloImpacto: boolean;
+  desde: string | null; // ISO
+  hasta: string | null; // ISO
+  limit: number;
+}
+
+export interface PuntoActividad {
+  fecha: string; // YYYY-MM-DD
+  eventos: number;
+  carasAgregadas: number;
+  carasQuitadas: number;
+  neto: number;
+}
+
+export interface ConteoNombre {
+  nombre: string;
+  valor: number;
+  eventos: number;
+}
+
+export interface ResumenHistorial {
+  actualizadoEn: string;
+  desde: string;
+  hasta: string;
+  totalEventos: number;
+  carasAgregadas: number;
+  carasQuitadas: number;
+  netoCaras: number;
+  autorizaciones: { total: number; dg: number; dcm: number; rechazos: number; carasAprobadas: number };
+  porDia: PuntoActividad[];
+  porCategoria: ConteoNombre[];
+  topUsuarios: ConteoNombre[]; // por # de acciones
+  topQuitadores: ConteoNombre[]; // por caras quitadas
+  topCampanias: ConteoNombre[]; // por # de acciones
+}
