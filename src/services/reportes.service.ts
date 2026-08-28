@@ -9,6 +9,8 @@ const COL_DIM: Record<Dimension, string> = {
   cliente: 'U_Cliente',
   mueble: 'Dscription',
   categoria: 'U_Categoria',
+  marca: 'U_Marca',
+  producto: 'U_Producto',
 };
 
 export function dimensionValida(d: string): d is Dimension {

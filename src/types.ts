@@ -195,4 +195,4 @@ export interface ConteoMonto {
   n: number;
 }
 
-export type Dimension = 'plaza' | 'digital' | 'asesor' | 'cliente' | 'mueble' | 'categoria';
+export type Dimension = 'plaza' | 'digital' | 'asesor' | 'cliente' | 'mueble' | 'categoria' | 'marca' | 'producto';
