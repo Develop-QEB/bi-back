@@ -270,6 +270,7 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
   const cat = new Map<string, number>();
   const usuarios = new Map<string, { valor: number; eventos: number }>();
   const quitadores = new Map<string, number>();
+  const alzasUsuario = new Map<string, number>();
   const campanias = new Map<number, { nombre: string; valor: number }>();
   let carasAgregadas = 0, carasQuitadas = 0;
   const aut = { total: 0, dg: 0, dcm: 0, rechazos: 0, carasAprobadas: 0 };
@@ -304,6 +305,7 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
       u.eventos++; u.valor++;
       usuarios.set(r.usuario, u);
       if (categoria === 'eliminacion' && rem > 0) quitadores.set(r.usuario, (quitadores.get(r.usuario) ?? 0) + rem);
+      if (categoria === 'autorizacion' && apr > 0) alzasUsuario.set(r.usuario, (alzasUsuario.get(r.usuario) ?? 0) + apr);
     }
     if (r.campania && r.campaniaId != null) {
       const ex = campanias.get(Number(r.campaniaId)) ?? { nombre: r.campania, valor: 0 };
@@ -330,6 +332,14 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
       .sort((a, b) => b[1].valor - a[1].valor)
       .slice(0, 8)
       .map(([id, v]) => ({ id, nombre: v.nombre, valor: v.valor, eventos: v.valor })),
+    variacionPorUsuario: [...new Set([...alzasUsuario.keys(), ...quitadores.keys()])]
+      .map((nombre) => {
+        const alzas = alzasUsuario.get(nombre) ?? 0;
+        const bajas = quitadores.get(nombre) ?? 0;
+        return { nombre, alzas, bajas, neto: alzas - bajas };
+      })
+      .sort((a, b) => Math.abs(b.neto) - Math.abs(a.neto))
+      .slice(0, 10),
   };
 }
 

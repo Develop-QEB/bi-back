@@ -159,4 +159,30 @@ export interface ResumenHistorial {
   topUsuarios: ConteoNombre[]; // por # de acciones
   topQuitadores: ConteoNombre[]; // por caras quitadas
   topCampanias: ConteoNombre[]; // por # de acciones
+  variacionPorUsuario: VariacionUsuario[]; // alzas/bajas/neto de caras por persona
+}
+
+/** Variación de caras de una persona: aprobó (alzas) vs quitó (bajas). */
+export interface VariacionUsuario {
+  nombre: string;
+  alzas: number;
+  bajas: number;
+  neto: number;
+}
+
+// ---------------- Embudo de conversión ----------------
+
+export interface EtapaEmbudo {
+  nombre: string;
+  valor: number;
+  /** % respecto a la primera etapa */
+  pct: number;
+}
+
+export interface Embudo {
+  etapas: EtapaEmbudo[];
+  solicitud: ConteoNombre[];
+  propuesta: ConteoNombre[];
+  campania: ConteoNombre[];
+  totales: { solicitudes: number; propuestas: number; campanias: number };
 }

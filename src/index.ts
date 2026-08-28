@@ -6,6 +6,7 @@ import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getResumen } from './services/historial.service.js';
+import { getEmbudo } from './services/reportes.service.js';
 import { attachRealtime } from './realtime.js';
 import type { BaseDatos, CategoriaAccion, FiltrosHistorial, FiltrosResumen } from './types.js';
 
@@ -110,6 +111,11 @@ app.get('/historial/contexto', wrap(async (req, res) => {
   const refId = Number(req.query.refId);
   if (!Number.isInteger(refId) || refId <= 0) return res.status(400).json({ error: 'refId inválido' });
   res.json(await getContexto(refId));
+}));
+
+// --- Reportes ---
+app.get('/reportes/embudo', wrap(async (_req, res) => {
+  res.json(await getEmbudo());
 }));
 
 // --- Presupuesto (meta editable — el lapicito) ---
