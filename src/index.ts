@@ -5,7 +5,7 @@ import { env } from './env.js';
 import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
-import { getEventos, getResumen } from './services/historial.service.js';
+import { getContexto, getEventos, getResumen } from './services/historial.service.js';
 import { attachRealtime } from './realtime.js';
 import type { BaseDatos, CategoriaAccion, FiltrosHistorial, FiltrosResumen } from './types.js';
 
@@ -104,6 +104,12 @@ app.get('/historial/eventos', wrap(async (req, res) => {
 app.get('/historial/resumen', wrap(async (req, res) => {
   const f = parseFiltrosHistorial(req);
   res.json(await getResumen({ desde: f.desde, hasta: f.hasta }));
+}));
+
+app.get('/historial/contexto', wrap(async (req, res) => {
+  const refId = Number(req.query.refId);
+  if (!Number.isInteger(refId) || refId <= 0) return res.status(400).json({ error: 'refId inválido' });
+  res.json(await getContexto(refId));
 }));
 
 // --- Presupuesto (meta editable — el lapicito) ---

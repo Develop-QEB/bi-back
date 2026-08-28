@@ -125,9 +125,24 @@ export interface PuntoActividad {
 }
 
 export interface ConteoNombre {
+  /** id de la campaña (solo en topCampanias); permite filtrar por servidor. */
+  id?: number;
   nombre: string;
   valor: number;
   eventos: number;
+}
+
+/** Detalle de una propuesta/campaña + su línea de tiempo completa. */
+export interface ContextoHistorial {
+  refId: number;
+  campania: string | null;
+  cliente: string | null;
+  asesor: string | null;
+  marca: string | null;
+  status: string | null;
+  descripcion: string | null;
+  inversion: number | null;
+  eventos: EventoHistorial[];
 }
 
 export interface ResumenHistorial {

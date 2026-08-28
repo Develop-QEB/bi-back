@@ -2,6 +2,7 @@ import { query } from '../db.js';
 import type {
   CategoriaAccion,
   ConteoNombre,
+  ContextoHistorial,
   EventoHistorial,
   FiltrosHistorial,
   PuntoActividad,
@@ -159,6 +160,37 @@ const SELECT_EVENTO = `
     FROM historial h
     LEFT JOIN campania c ON c.id = h.ref_id AND h.tipo = 'Campaña'`;
 
+/**
+ * Mapa ref_id → nombre de campaña. Una campaña se liga por `id` (evento de
+ * Campaña) o por `cotizacion_id` = id de la propuesta (evento de Propuesta),
+ * así que un id de propuesta también resuelve su campaña.
+ */
+async function resolverCampanias(refIds: (number | null)[]): Promise<Map<number, string>> {
+  const ids = [...new Set(refIds.map(Number).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!ids.length) return new Map();
+  const inList = ids.join(','); // enteros seguros (ya validados)
+  const rows = await query<{ id: number; cotizacion_id: number | null; nombre: string | null }>(
+    `SELECT id, cotizacion_id, nombre FROM campania WHERE id IN (${inList}) OR cotizacion_id IN (${inList})`
+  );
+  const m = new Map<number, string>();
+  for (const r of rows) {
+    if (!r.nombre) continue;
+    m.set(Number(r.id), r.nombre);
+    if (r.cotizacion_id != null) m.set(Number(r.cotizacion_id), r.nombre);
+  }
+  return m;
+}
+
+/** Rellena `campania` en los eventos que no la traen, resolviendo por ref_id. */
+async function enriquecerCampanias(eventos: EventoHistorial[]): Promise<void> {
+  const faltan = eventos.filter((e) => !e.campania && e.refId).map((e) => e.refId as number);
+  if (!faltan.length) return;
+  const mapa = await resolverCampanias(faltan);
+  for (const e of eventos) {
+    if (!e.campania && e.refId && mapa.has(e.refId)) e.campania = mapa.get(e.refId) ?? null;
+  }
+}
+
 /** Feed de eventos, más reciente primero, con filtros. */
 export async function getEventos(f: FiltrosHistorial): Promise<EventoHistorial[]> {
   const cond: string[] = ['1=1'];
@@ -182,7 +214,9 @@ export async function getEventos(f: FiltrosHistorial): Promise<EventoHistorial[]
   let eventos = rows.map(parseEvento);
   if (f.categoria) eventos = eventos.filter((e) => e.categoria === f.categoria);
   if (f.soloImpacto) eventos = eventos.filter((e) => e.caras !== 0 || e.monto);
-  return eventos.slice(0, lim);
+  eventos = eventos.slice(0, lim);
+  await enriquecerCampanias(eventos);
+  return eventos;
 }
 
 /** Para el poller de tiempo real: eventos con id > lastId (ascendente). */
@@ -191,7 +225,9 @@ export async function getEventosDesdeId(lastId: number, cap = 200): Promise<Even
     `${SELECT_EVENTO} WHERE h.id > :lastId ORDER BY h.id ASC LIMIT ${Math.min(cap, 500)}`,
     { lastId }
   );
-  return rows.map(parseEvento);
+  const eventos = rows.map(parseEvento);
+  await enriquecerCampanias(eventos);
+  return eventos;
 }
 
 export async function getMaxId(): Promise<number> {
@@ -212,6 +248,7 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
     apr: number | null;
     usuario: string | null;
     autTipo: string | null;
+    campaniaId: number | null;
     campania: string | null;
   }>(
     `SELECT DATE(h.fecha_hora) AS dia,
@@ -221,6 +258,7 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
             CASE WHEN JSON_VALID(h.detalles) THEN CAST(JSON_EXTRACT(h.detalles,'$.carasAprobadas') AS SIGNED) END AS apr,
             CASE WHEN JSON_VALID(h.detalles) THEN JSON_UNQUOTE(JSON_EXTRACT(h.detalles,'$.usuario')) END AS usuario,
             CASE WHEN JSON_VALID(h.detalles) THEN JSON_UNQUOTE(JSON_EXTRACT(h.detalles,'$.tipo')) END AS autTipo,
+            c.id AS campaniaId,
             c.nombre AS campania
        FROM historial h
        LEFT JOIN campania c ON c.id = h.ref_id AND h.tipo = 'Campaña'
@@ -232,7 +270,7 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
   const cat = new Map<string, number>();
   const usuarios = new Map<string, { valor: number; eventos: number }>();
   const quitadores = new Map<string, number>();
-  const campanias = new Map<string, number>();
+  const campanias = new Map<number, { nombre: string; valor: number }>();
   let carasAgregadas = 0, carasQuitadas = 0;
   const aut = { total: 0, dg: 0, dcm: 0, rechazos: 0, carasAprobadas: 0 };
 
@@ -267,7 +305,11 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
       usuarios.set(r.usuario, u);
       if (categoria === 'eliminacion' && rem > 0) quitadores.set(r.usuario, (quitadores.get(r.usuario) ?? 0) + rem);
     }
-    if (r.campania) campanias.set(r.campania, (campanias.get(r.campania) ?? 0) + 1);
+    if (r.campania && r.campaniaId != null) {
+      const ex = campanias.get(Number(r.campaniaId)) ?? { nombre: r.campania, valor: 0 };
+      ex.valor++;
+      campanias.set(Number(r.campaniaId), ex);
+    }
   }
 
   const top = (m: Map<string, number>, n = 8): ConteoNombre[] =>
@@ -284,6 +326,52 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
     topUsuarios: [...usuarios.entries()].sort((a, b) => b[1].eventos - a[1].eventos).slice(0, 8)
       .map(([nombre, v]) => ({ nombre, valor: v.eventos, eventos: v.eventos })),
     topQuitadores: top(quitadores, 8),
-    topCampanias: top(campanias, 8),
+    topCampanias: [...campanias.entries()]
+      .sort((a, b) => b[1].valor - a[1].valor)
+      .slice(0, 8)
+      .map(([id, v]) => ({ id, nombre: v.nombre, valor: v.valor, eventos: v.valor })),
+  };
+}
+
+/** Detalle de una propuesta/campaña (por ref_id) + toda su línea de tiempo. */
+export async function getContexto(refId: number): Promise<ContextoHistorial> {
+  const mapa = await resolverCampanias([refId]);
+  const campania = mapa.get(refId) ?? null;
+
+  const [prop] = await query<{
+    id: number;
+    status: string | null;
+    descripcion: string | null;
+    inversion: string | null;
+    razon_social: string | null;
+    asesor: string | null;
+    marca_nombre: string | null;
+  }>(
+    `SELECT p.id, p.status, p.descripcion, p.inversion,
+            s.razon_social, s.asesor, s.marca_nombre
+       FROM propuesta p
+       LEFT JOIN solicitud s ON s.id = p.solicitud_id
+      WHERE p.id = :id
+      LIMIT 1`,
+    { id: refId }
+  );
+
+  const rows = await query<RowEvento>(
+    `${SELECT_EVENTO} WHERE h.ref_id = :id ORDER BY h.id DESC LIMIT 300`,
+    { id: refId }
+  );
+  const eventos = rows.map(parseEvento);
+  await enriquecerCampanias(eventos);
+
+  return {
+    refId,
+    campania,
+    cliente: prop?.razon_social ?? null,
+    asesor: prop?.asesor ?? null,
+    marca: prop?.marca_nombre ?? null,
+    status: prop?.status ?? null,
+    descripcion: prop?.descripcion ?? null,
+    inversion: prop?.inversion != null ? Number(prop.inversion) : null,
+    eventos,
   };
 }
