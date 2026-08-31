@@ -6,7 +6,7 @@ import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getResumen } from './services/historial.service.js';
-import { dimensionValida, getDistribucion, getEmbudo } from './services/reportes.service.js';
+import { dimensionValida, getDistribucion, getEmbudo, getVentasPeriodo } from './services/reportes.service.js';
 import { attachRealtime } from './realtime.js';
 import type { BaseDatos, CategoriaAccion, FiltrosHistorial, FiltrosResumen } from './types.js';
 
@@ -123,6 +123,14 @@ app.get('/reportes/distribucion', wrap(async (req, res) => {
   if (!dimensionValida(dim)) return res.status(400).json({ error: 'dim inválida' });
   const anio = Number(req.query.anio) || new Date().getFullYear();
   res.json(await getDistribucion(dim, anio));
+}));
+
+app.get('/reportes/ventas-periodo', wrap(async (req, res) => {
+  const per = String(req.query.periodo ?? 'mes');
+  if (per !== 'mes' && per !== 'catorcena' && per !== 'semana') return res.status(400).json({ error: 'periodo inválido' });
+  const anio = Number(req.query.anio) || new Date().getFullYear();
+  const asesor = typeof req.query.asesor === 'string' && req.query.asesor.trim() ? req.query.asesor.trim() : null;
+  res.json(await getVentasPeriodo(per, anio, asesor));
 }));
 
 // --- Presupuesto (meta editable — el lapicito) ---

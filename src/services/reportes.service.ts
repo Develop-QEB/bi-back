@@ -1,5 +1,5 @@
 import { query } from '../db.js';
-import type { ConteoMonto, ConteoNombre, Dimension, Embudo, EtapaEmbudo } from '../types.js';
+import type { ConteoMonto, ConteoNombre, ConteoPeriodo, Dimension, Embudo, EtapaEmbudo, Periodo } from '../types.js';
 
 /** Columna de V_APS_Globales para cada dimensión. */
 const COL_DIM: Record<Dimension, string> = {
@@ -56,6 +56,42 @@ async function conteoStatus(tabla: string): Promise<ConteoNombre[]> {
 const suma = (c: ConteoNombre[]) => c.reduce((a, b) => a + b.valor, 0);
 const de = (c: ConteoNombre[], ...nombres: string[]) =>
   c.filter((x) => nombres.includes(x.nombre)).reduce((a, b) => a + b.valor, 0);
+
+/** Ventas reales por período (mes 1–12 / catorcena / semana ISO), opcional por asesor. */
+export async function getVentasPeriodo(periodo: Periodo, anio: number, asesor: string | null): Promise<ConteoPeriodo[]> {
+  const cond: string[] = ['`Año` = :anio'];
+  const p: Record<string, unknown> = { anio };
+  if (asesor) {
+    cond.push('UPPER(`U_Asesor`) = :asesor');
+    p.asesor = asesor.toUpperCase();
+  }
+  let expr: string;
+  if (periodo === 'mes') {
+    expr = '`Mes`';
+  } else if (periodo === 'catorcena') {
+    expr = "CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(`Periodo`,' ',-1),'-',1) AS UNSIGNED)";
+    cond.push("`Periodo` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %'");
+  } else {
+    expr = 'WEEK(`Fecha`, 3)'; // ISO week
+    cond.push('`Fecha` IS NOT NULL');
+  }
+  // Subquery: se agrupa sobre el valor YA calculado (agrupar por alias fallaba en semana).
+  const rows = await query<{ periodo: number | null; monto: string; caras: string | null }>(
+    `SELECT periodo, SUM(monto) monto, SUM(caras) caras
+       FROM (
+         SELECT ${expr} periodo, \`Monto Total\` monto, \`Caras\` caras
+           FROM V_APS_Globales
+          WHERE ${cond.join(' AND ')}
+       ) t
+      WHERE periodo IS NOT NULL
+      GROUP BY periodo
+      ORDER BY periodo`,
+    p
+  );
+  return rows
+    .filter((r) => r.periodo != null)
+    .map((r) => ({ periodo: Number(r.periodo), monto: Number(r.monto) || 0, caras: Number(r.caras) || 0 }));
+}
 
 export async function getEmbudo(): Promise<Embudo> {
   const [sol, prop, camp] = await Promise.all([
