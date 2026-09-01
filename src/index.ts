@@ -7,6 +7,15 @@ import { getAnios, getAsesores, getClientes, getResumenVentas } from './services
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getResumen } from './services/historial.service.js';
 import { dimensionValida, getDistribucion, getEmbudo, getVentasPeriodo } from './services/reportes.service.js';
+import {
+  getObjetivos,
+  limpiarAsesores as limpiarObjAsesores,
+  limpiarMensual as limpiarObjMensual,
+  setAsesor as setObjAsesor,
+  setAsesorBulk as setObjAsesorBulk,
+  setMensual as setObjMensual,
+  setMensualBulk as setObjMensualBulk,
+} from './services/objetivos.service.js';
 import { attachRealtime } from './realtime.js';
 import type { BaseDatos, CategoriaAccion, FiltrosHistorial, FiltrosResumen } from './types.js';
 
@@ -131,6 +140,60 @@ app.get('/reportes/ventas-periodo', wrap(async (req, res) => {
   const anio = Number(req.query.anio) || new Date().getFullYear();
   const asesor = typeof req.query.asesor === 'string' && req.query.asesor.trim() ? req.query.asesor.trim() : null;
   res.json(await getVentasPeriodo(per, anio, asesor));
+}));
+
+// --- Objetivos/metas (BD propia escribible, compartidos por el equipo) ---
+const anioBody = (v: unknown) => (Number.isInteger(Number(v)) && Number(v) >= 2000 && Number(v) <= 2100 ? Number(v) : null);
+
+app.get('/objetivos', wrap(async (req, res) => {
+  const anio = Number(req.query.anio) || new Date().getFullYear();
+  res.json(await getObjetivos(anio));
+}));
+
+app.put('/objetivos/mensual', wrap(async (req, res) => {
+  const { anio, mes, monto } = req.body ?? {};
+  const a = anioBody(anio);
+  if (a === null || !(Number(mes) >= 1 && Number(mes) <= 12)) return res.status(400).json({ error: 'anio/mes inválido' });
+  await setObjMensual(a, Number(mes), Number(monto));
+  res.json({ ok: true });
+}));
+
+app.put('/objetivos/mensual-bulk', wrap(async (req, res) => {
+  const { anio, montos } = req.body ?? {};
+  const a = anioBody(anio);
+  if (a === null || !Array.isArray(montos)) return res.status(400).json({ error: 'inválido' });
+  await setObjMensualBulk(a, montos.map(Number));
+  res.json({ ok: true });
+}));
+
+app.put('/objetivos/asesor', wrap(async (req, res) => {
+  const { anio, asesor, monto } = req.body ?? {};
+  const a = anioBody(anio);
+  if (a === null || typeof asesor !== 'string' || !asesor.trim()) return res.status(400).json({ error: 'inválido' });
+  await setObjAsesor(a, asesor.trim(), Number(monto));
+  res.json({ ok: true });
+}));
+
+app.put('/objetivos/asesor-bulk', wrap(async (req, res) => {
+  const { anio, montos } = req.body ?? {};
+  const a = anioBody(anio);
+  if (a === null || typeof montos !== 'object' || montos === null) return res.status(400).json({ error: 'inválido' });
+  await setObjAsesorBulk(a, montos as Record<string, number>);
+  res.json({ ok: true });
+}));
+
+app.delete('/objetivos/mensual', wrap(async (req, res) => {
+  const a = anioBody(req.query.anio);
+  if (a === null) return res.status(400).json({ error: 'anio inválido' });
+  await limpiarObjMensual(a);
+  res.json({ ok: true });
+}));
+
+app.delete('/objetivos/asesor', wrap(async (req, res) => {
+  const a = anioBody(req.query.anio);
+  if (a === null) return res.status(400).json({ error: 'anio inválido' });
+  await limpiarObjAsesores(a);
+  res.json({ ok: true });
 }));
 
 // --- Presupuesto (meta editable — el lapicito) ---

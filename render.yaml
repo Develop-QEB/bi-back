@@ -34,3 +34,14 @@ services:
         value: u658050396_QEB
       - key: DB_SSL
         value: "true"
+      # --- BD propia escribible (Hostinger) para objetivos/metas ---
+      - key: WDB_HOST
+        value: srv1978.hstgr.io
+      - key: WDB_PORT
+        value: "3306"
+      - key: WDB_USER
+        value: u658050396_QEBI
+      - key: WDB_PASSWORD
+        sync: false
+      - key: WDB_NAME
+        value: u658050396_QEBI

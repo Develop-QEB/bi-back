@@ -24,6 +24,18 @@ export const env = {
   writeDb: process.env.BI_WRITE_DB ?? process.env.DB_NAME ?? 'u658050396_QEB',
   /** Si true, el back crea la tabla bi_presupuesto (única escritura). Default false = nada se crea. */
   allowCreate: (process.env.BI_ALLOW_CREATE ?? 'false') === 'true',
+  /**
+   * Base propia ESCRIBIBLE (Hostinger) — aquí SÍ creamos tablas y guardamos lo que
+   * captura el equipo (objetivos/metas). Separada de la BD de QEB (solo lectura).
+   */
+  dbWrite: {
+    host: process.env.WDB_HOST ?? '',
+    port: Number(process.env.WDB_PORT ?? 3306),
+    user: process.env.WDB_USER ?? '',
+    password: process.env.WDB_PASSWORD ?? '',
+    database: process.env.WDB_NAME ?? '',
+    enabled: Boolean(process.env.WDB_HOST && process.env.WDB_USER),
+  },
   /** 'TOTAL' = todos los Monto Total; 'VENTA' = solo U_dscTAsig='Venta'. */
   ventaDef: (process.env.VENTA_DEF ?? 'TOTAL').toUpperCase() as 'TOTAL' | 'VENTA',
 } as const;
