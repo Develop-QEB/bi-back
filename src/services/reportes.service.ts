@@ -1,5 +1,60 @@
 import { query } from '../db.js';
-import type { ConteoMonto, ConteoNombre, ConteoPeriodo, Dimension, Embudo, EtapaEmbudo, Periodo } from '../types.js';
+import type { CampaniaDetalle, Ciclo, ConteoMonto, ConteoNombre, ConteoPeriodo, Dimension, Embudo, EtapaEmbudo, Periodo } from '../types.js';
+
+const toISO = (v: unknown): string | null => (v == null ? null : v instanceof Date ? v.toISOString() : String(v));
+
+/** Ciclo de venta: días promedio entre transiciones (Solicitud→Propuesta→Aprobación). */
+export async function getCiclo(): Promise<Ciclo> {
+  const [r] = await query<{ solProp: string | null; propAprob: string | null; total: number; aprobadas: number }>(
+    `SELECT AVG(DATEDIFF(p.fecha, s.fecha)) solProp,
+            AVG(DATEDIFF(ca.fecha_aprobacion, p.fecha)) propAprob,
+            COUNT(*) total,
+            SUM(ca.fecha_aprobacion IS NOT NULL) aprobadas
+       FROM solicitud s
+       JOIN propuesta p ON p.solicitud_id = s.id
+       LEFT JOIN campania ca ON ca.cotizacion_id = p.id`
+  );
+  const solProp = Math.max(0, Math.round(Number(r?.solProp) || 0));
+  const propAprob = Math.max(0, Math.round((Number(r?.propAprob) || 0) * 10) / 10);
+  const total = Number(r?.total) || 0;
+  const aprobadas = Number(r?.aprobadas) || 0;
+  return {
+    etapas: [
+      { de: 'Solicitud', a: 'Propuesta', dias: solProp },
+      { de: 'Propuesta', a: 'Aprobación', dias: propAprob },
+    ],
+    cicloTotalDias: Math.round((solProp + propAprob) * 10) / 10,
+    conversionGlobalPct: total ? Math.round((aprobadas / total) * 1000) / 10 : 0,
+    total,
+  };
+}
+
+/** Detalle de campañas recientes. */
+export async function getCampanias(limit = 40): Promise<CampaniaDetalle[]> {
+  const n = Math.min(Math.max(limit, 1), 200);
+  const rows = await query<{
+    id: number; nombre: string; status: string | null; total_caras: string | null;
+    fecha_inicio: Date | null; fecha_fin: Date | null; cliente: string | null; asesor: string | null;
+  }>(
+    `SELECT ca.id, ca.nombre, ca.status, ca.total_caras, ca.fecha_inicio, ca.fecha_fin,
+            s.razon_social cliente, s.asesor
+       FROM campania ca
+       LEFT JOIN propuesta p ON p.id = ca.cotizacion_id
+       LEFT JOIN solicitud s ON s.id = p.solicitud_id
+      ORDER BY ca.id DESC
+      LIMIT ${n}`
+  );
+  return rows.map((r) => ({
+    id: Number(r.id),
+    nombre: r.nombre,
+    status: r.status,
+    totalCaras: Number(r.total_caras) || 0,
+    fechaInicio: toISO(r.fecha_inicio),
+    fechaFin: toISO(r.fecha_fin),
+    cliente: r.cliente,
+    asesor: r.asesor,
+  }));
+}
 
 /** Columna de V_APS_Globales para cada dimensión. */
 const COL_DIM: Record<Dimension, string> = {

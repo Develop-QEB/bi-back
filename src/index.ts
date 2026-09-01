@@ -5,8 +5,8 @@ import { env } from './env.js';
 import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
-import { getContexto, getEventos, getResumen } from './services/historial.service.js';
-import { dimensionValida, getDistribucion, getEmbudo, getVentasPeriodo } from './services/reportes.service.js';
+import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
+import { dimensionValida, getCampanias, getCiclo, getDistribucion, getEmbudo, getVentasPeriodo } from './services/reportes.service.js';
 import {
   getObjetivos,
   limpiarAsesores as limpiarObjAsesores,
@@ -140,6 +140,20 @@ app.get('/reportes/ventas-periodo', wrap(async (req, res) => {
   const anio = Number(req.query.anio) || new Date().getFullYear();
   const asesor = typeof req.query.asesor === 'string' && req.query.asesor.trim() ? req.query.asesor.trim() : null;
   res.json(await getVentasPeriodo(per, anio, asesor));
+}));
+
+app.get('/reportes/ciclo', wrap(async (_req, res) => {
+  res.json(await getCiclo());
+}));
+
+app.get('/reportes/campanias', wrap(async (req, res) => {
+  res.json(await getCampanias(Number(req.query.limit) || 40));
+}));
+
+app.get('/reportes/impacto', wrap(async (req, res) => {
+  const desde = typeof req.query.desde === 'string' ? req.query.desde : null;
+  const hasta = typeof req.query.hasta === 'string' ? req.query.hasta : null;
+  res.json(await getImpacto({ desde, hasta }));
 }));
 
 // --- Objetivos/metas (BD propia escribible, compartidos por el equipo) ---

@@ -5,6 +5,7 @@ import type {
   ContextoHistorial,
   EventoHistorial,
   FiltrosHistorial,
+  Impacto,
   PuntoActividad,
   ResumenHistorial,
 } from '../types.js';
@@ -340,6 +341,40 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
       })
       .sort((a, b) => Math.abs(b.neto) - Math.abs(a.neto))
       .slice(0, 10),
+  };
+}
+
+/**
+ * Impacto en inversión: ediciones cuyo detalle trae delta de $ (tarifa/inversión).
+ * Alimenta "impacto total/promedio/mayor", el scatter y el historial de ediciones.
+ */
+export async function getImpacto(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): Promise<Impacto> {
+  const hasta = f.hasta ?? new Date().toISOString();
+  const desde = f.desde ?? new Date(Date.now() - 45 * 864e5).toISOString();
+  const rows = await query<RowEvento>(
+    `${SELECT_EVENTO}
+      WHERE h.fecha_hora >= :desde AND h.fecha_hora < :hasta
+        AND JSON_VALID(h.detalles) AND h.detalles LIKE '%"cambios"%'
+        AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%onto%' OR h.detalles LIKE '%otal%')
+      ORDER BY h.id DESC
+      LIMIT 3000`,
+    { desde, hasta }
+  );
+  const eventos = rows.map(parseEvento).filter((e) => e.monto != null && e.monto !== 0);
+  await enriquecerCampanias(eventos);
+
+  const total = eventos.reduce((a, e) => a + (e.monto ?? 0), 0);
+  const promedio = eventos.length ? total / eventos.length : 0;
+  let mayor: EventoHistorial | null = null;
+  for (const e of eventos) if (!mayor || Math.abs(e.monto ?? 0) > Math.abs(mayor.monto ?? 0)) mayor = e;
+
+  return {
+    total,
+    promedio,
+    count: eventos.length,
+    mayor,
+    puntos: eventos.slice(0, 250).map((e) => ({ monto: e.monto ?? 0, caras: e.caras, campania: e.campania, usuario: e.usuario, fecha: e.fecha })),
+    ediciones: eventos.slice(0, 40),
   };
 }
 

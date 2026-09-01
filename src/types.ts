@@ -205,3 +205,40 @@ export interface ConteoPeriodo {
   monto: number;
   caras: number;
 }
+
+/** Ciclo de venta: tiempos entre transiciones de estatus. */
+export interface Ciclo {
+  etapas: { de: string; a: string; dias: number }[];
+  cicloTotalDias: number;
+  conversionGlobalPct: number;
+  total: number;
+}
+
+/** Fila de "Detalle de campañas". */
+export interface CampaniaDetalle {
+  id: number;
+  nombre: string;
+  status: string | null;
+  totalCaras: number;
+  fechaInicio: string | null;
+  fechaFin: string | null;
+  cliente: string | null;
+  asesor: string | null;
+}
+
+/** Impacto en inversión (ediciones con delta de $). */
+export interface PuntoImpacto {
+  monto: number;
+  caras: number;
+  campania: string | null;
+  usuario: string | null;
+  fecha: string;
+}
+export interface Impacto {
+  total: number;
+  promedio: number;
+  count: number;
+  mayor: EventoHistorial | null;
+  puntos: PuntoImpacto[];
+  ediciones: EventoHistorial[];
+}
