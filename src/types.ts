@@ -101,6 +101,12 @@ export interface EventoHistorial {
   monto: number | null;
   estadoAntes: string | null;
   estadoDespues: string | null;
+  /** Caras antes/después, agregadas sobre TODAS las caras editadas (ediciones de campaña/propuesta). null si el detalle no las trae. */
+  carasAntes: number | null;
+  carasDespues: number | null;
+  /** Inversión (costo) antes/después, agregada sobre todas las caras editadas. null si no aplica. */
+  invAntes: number | null;
+  invDespues: number | null;
   descripcion: string; // texto legible
 }
 

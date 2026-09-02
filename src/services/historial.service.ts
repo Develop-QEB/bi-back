@@ -64,6 +64,10 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let monto: number | null = null;
   let estadoAntes: string | null = null;
   let estadoDespues: string | null = null;
+  let carasAntes: number | null = null;
+  let carasDespues: number | null = null;
+  let invAntes: number | null = null;
+  let invDespues: number | null = null;
   let campania: string | null = row.campania_nombre ?? null;
   let descripcion = '';
 
@@ -86,8 +90,31 @@ export function parseEvento(row: RowEvento): EventoHistorial {
       const campoDe = (c: any) => String(c?.campo ?? c?.label ?? '');
       const est = json.cambios.find((c: any) => /estado/i.test(campoDe(c)));
       if (est) { estadoAntes = est.antes ?? null; estadoDespues = est.despues ?? null; }
-      const money = json.cambios.find((c: any) => /tarifa|inversi|monto|importe|total/i.test(campoDe(c)));
-      if (money) { const d = num(money.despues) - num(money.antes); if (d !== 0) monto = d; }
+
+      // Una edición toca MUCHAS caras (una fila por cara y por campo). Agregamos
+      // antes/después de todas para el ANTES→DESPUÉS real y el delta correcto.
+      let cA = 0, cD = 0, iA = 0, iD = 0, hayCaras = false, hayInv = false;
+      for (const c of json.cambios) {
+        const campo = String(c?.campo ?? '').toLowerCase();
+        const label = String(c?.label ?? '').toLowerCase();
+        if (campo === 'caras' || label === 'caras') {
+          cA += num(c.antes); cD += num(c.despues); hayCaras = true;
+        } else if (campo === 'costo' || /inversi[oó]n/.test(label)) {
+          // Solo "costo/Inversión" (importe total de la cara). tarifa_publica es
+          // precio unitario — no se suma para no inflar la inversión.
+          iA += num(c.antes); iD += num(c.despues); hayInv = true;
+        }
+      }
+      if (hayCaras) { carasAntes = cA; carasDespues = cD; caras = cD - cA; }
+      if (hayInv) {
+        invAntes = iA; invDespues = iD;
+        const d = iD - iA;
+        if (d !== 0) monto = d;
+      } else {
+        // Fallback: primer cambio monetario suelto (comportamiento previo).
+        const money = json.cambios.find((c: any) => /tarifa|inversi|monto|importe|total/i.test(campoDe(c)));
+        if (money) { const d = num(money.despues) - num(money.antes); if (d !== 0) monto = d; }
+      }
     }
     descripcion = describir(json, row, categoria, caras, campania, estadoAntes, estadoDespues);
   } else {
@@ -108,6 +135,10 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     monto,
     estadoAntes,
     estadoDespues,
+    carasAntes,
+    carasDespues,
+    invAntes,
+    invDespues,
     descripcion: descripcion || `${row.tipo} · ${row.accion}`,
   };
 }
@@ -373,8 +404,8 @@ export async function getImpacto(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
     promedio,
     count: eventos.length,
     mayor,
-    puntos: eventos.slice(0, 250).map((e) => ({ monto: e.monto ?? 0, caras: e.caras, campania: e.campania, usuario: e.usuario, fecha: e.fecha })),
-    ediciones: eventos.slice(0, 40),
+    puntos: eventos.slice(0, 400).map((e) => ({ monto: e.monto ?? 0, caras: e.caras, campania: e.campania, usuario: e.usuario, fecha: e.fecha })),
+    ediciones: eventos.slice(0, 200),
   };
 }
 
