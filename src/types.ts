@@ -220,6 +220,8 @@ export interface CampaniaDetalle {
   nombre: string;
   status: string | null;
   totalCaras: number;
+  /** Inversión de la campaña (propuesta.inversion). */
+  monto: number;
   fechaInicio: string | null;
   fechaFin: string | null;
   cliente: string | null;

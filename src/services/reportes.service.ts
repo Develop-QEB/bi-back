@@ -33,10 +33,10 @@ export async function getCiclo(): Promise<Ciclo> {
 export async function getCampanias(limit = 40): Promise<CampaniaDetalle[]> {
   const n = Math.min(Math.max(limit, 1), 200);
   const rows = await query<{
-    id: number; nombre: string; status: string | null; total_caras: string | null;
+    id: number; nombre: string; status: string | null; total_caras: string | null; inversion: string | null;
     fecha_inicio: Date | null; fecha_fin: Date | null; cliente: string | null; asesor: string | null;
   }>(
-    `SELECT ca.id, ca.nombre, ca.status, ca.total_caras, ca.fecha_inicio, ca.fecha_fin,
+    `SELECT ca.id, ca.nombre, ca.status, ca.total_caras, p.inversion, ca.fecha_inicio, ca.fecha_fin,
             s.razon_social cliente, s.asesor
        FROM campania ca
        LEFT JOIN propuesta p ON p.id = ca.cotizacion_id
@@ -49,6 +49,7 @@ export async function getCampanias(limit = 40): Promise<CampaniaDetalle[]> {
     nombre: r.nombre,
     status: r.status,
     totalCaras: Number(r.total_caras) || 0,
+    monto: Number(r.inversion) || 0,
     fechaInicio: toISO(r.fecha_inicio),
     fechaFin: toISO(r.fecha_fin),
     cliente: r.cliente,
