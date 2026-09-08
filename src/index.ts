@@ -151,9 +151,10 @@ app.get('/reportes/campanias', wrap(async (req, res) => {
 }));
 
 app.get('/reportes/impacto', wrap(async (req, res) => {
+  const anio = Number(req.query.anio) || null;
   const desde = typeof req.query.desde === 'string' ? req.query.desde : null;
   const hasta = typeof req.query.hasta === 'string' ? req.query.hasta : null;
-  res.json(await getImpacto({ desde, hasta }));
+  res.json(await getImpacto({ anio, desde, hasta }));
 }));
 
 // --- Objetivos/metas (BD propia escribible, compartidos por el equipo) ---

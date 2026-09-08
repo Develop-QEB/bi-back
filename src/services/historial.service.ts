@@ -376,19 +376,100 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
 }
 
 /**
+ * Enriquece ediciones con los atributos de su campaña (cliente, asesor, plazas,
+ * formatos, muebles) — para los filtros del dashboard del jefe. "Aproximado por
+ * campaña": el historial no guarda qué plaza/formato/mueble se editó en cada
+ * registro, así que asociamos TODAS las plazas/formatos/muebles reservados de la
+ * campaña (o propuesta) a cada edición suya.
+ *
+ * ref_id de un evento de Propuesta ya es el idquote; el de Campaña se traduce a
+ * su cotizacion_id (= idquote). Todo SOLO SELECT.
+ */
+async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
+  const refIds = [...new Set(eventos.map((e) => Number(e.refId)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!refIds.length) return;
+  const inRefs = refIds.join(',');
+
+  // ref_id de Campaña → cotizacion_id (idquote). Para Propuesta, ref_id ya es el idquote.
+  const camps = await query<{ id: number; cotizacion_id: number | null }>(
+    `SELECT id, cotizacion_id FROM campania WHERE id IN (${inRefs})`
+  );
+  const camp2cotiz = new Map<number, number>();
+  for (const c of camps) if (c.cotizacion_id != null) camp2cotiz.set(Number(c.id), Number(c.cotizacion_id));
+  const quoteDe = (refId: number | null): number | null => {
+    const r = Number(refId);
+    if (!Number.isFinite(r) || r <= 0) return null;
+    return camp2cotiz.get(r) ?? r;
+  };
+
+  const quoteIds = [...new Set(eventos.map((e) => quoteDe(e.refId)).filter((n): n is number => n != null))];
+  if (!quoteIds.length) return;
+  const inQuotes = quoteIds.join(',');
+
+  // Cliente / asesor de la propuesta (idquote = propuesta.id).
+  const propRows = await query<{ q: number; cliente: string | null; asesor: string | null }>(
+    `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor
+       FROM propuesta p
+       LEFT JOIN solicitud s ON s.id = p.solicitud_id
+      WHERE p.id IN (${inQuotes})`
+  );
+  const propMap = new Map<number, { cliente: string | null; asesor: string | null }>();
+  for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: r.asesor ?? null });
+
+  // Plaza / formato / mueble reservados de la campaña (join verificado, ~1s/400 quotes).
+  const attrRows = await query<{ q: number; plaza: string | null; formato: string | null; mueble: string | null }>(
+    `SELECT sc.idquote AS q, i.plaza AS plaza, i.tradicional_digital AS formato, i.tipo_de_mueble AS mueble
+       FROM solicitudCaras sc
+       JOIN reservas r ON r.solicitudCaras_id = sc.id AND r.deleted_at IS NULL
+       JOIN inventarios i ON i.id = r.inventario_id
+      WHERE sc.idquote IN (${inQuotes})
+      GROUP BY sc.idquote, i.plaza, i.tradicional_digital, i.tipo_de_mueble`
+  );
+  const attrMap = new Map<number, { plazas: Set<string>; formatos: Set<string>; muebles: Set<string> }>();
+  for (const r of attrRows) {
+    const q = Number(r.q);
+    const a = attrMap.get(q) ?? { plazas: new Set<string>(), formatos: new Set<string>(), muebles: new Set<string>() };
+    if (r.plaza && String(r.plaza).trim()) a.plazas.add(String(r.plaza).trim());
+    if (r.formato && String(r.formato).trim()) a.formatos.add(String(r.formato).trim());
+    if (r.mueble && String(r.mueble).trim()) a.muebles.add(String(r.mueble).trim());
+    attrMap.set(q, a);
+  }
+
+  for (const e of eventos) {
+    const q = quoteDe(e.refId);
+    if (q == null) continue;
+    const p = propMap.get(q);
+    if (p) { e.cliente = p.cliente; e.asesor = p.asesor; }
+    const a = attrMap.get(q);
+    e.plazas = a ? [...a.plazas] : [];
+    e.formatos = a ? [...a.formatos] : [];
+    e.muebles = a ? [...a.muebles] : [];
+  }
+}
+
+/**
  * Impacto en inversión: ediciones cuyo detalle trae delta de $ (tarifa/inversión).
  * Alimenta "impacto total/promedio/mayor", el scatter y el historial de ediciones.
+ * Con `anio` acota a ese año completo (para los filtros de Mes/Plaza/etc. del jefe).
  */
-export async function getImpacto(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): Promise<Impacto> {
-  const hasta = f.hasta ?? new Date().toISOString();
-  const desde = f.desde ?? new Date(Date.now() - 45 * 864e5).toISOString();
+export async function getImpacto(
+  f: { anio?: number | null; desde?: string | null; hasta?: string | null }
+): Promise<Impacto> {
+  let desde: string, hasta: string;
+  if (f.anio && Number.isFinite(f.anio)) {
+    desde = `${f.anio}-01-01 00:00:00`;
+    hasta = `${f.anio + 1}-01-01 00:00:00`;
+  } else {
+    hasta = f.hasta ?? new Date().toISOString();
+    desde = f.desde ?? new Date(Date.now() - 45 * 864e5).toISOString();
+  }
   const rows = await query<RowEvento>(
     `${SELECT_EVENTO}
       WHERE h.fecha_hora >= :desde AND h.fecha_hora < :hasta
         AND JSON_VALID(h.detalles) AND h.detalles LIKE '%"cambios"%'
         AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%onto%' OR h.detalles LIKE '%otal%')
       ORDER BY h.id DESC
-      LIMIT 3000`,
+      LIMIT 5000`,
     { desde, hasta }
   );
   const eventos = rows.map(parseEvento).filter((e) => e.monto != null && e.monto !== 0);
@@ -399,13 +480,18 @@ export async function getImpacto(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
   let mayor: EventoHistorial | null = null;
   for (const e of eventos) if (!mayor || Math.abs(e.monto ?? 0) > Math.abs(mayor.monto ?? 0)) mayor = e;
 
+  // Devolvemos y enriquecemos hasta 1000 ediciones (para que los filtros del año
+  // tengan todo el universo). El enriquecido corre 2 queries batch (~1–2s).
+  const ediciones = eventos.slice(0, 1000);
+  await enriquecerAtributos(ediciones);
+
   return {
     total,
     promedio,
     count: eventos.length,
     mayor,
-    puntos: eventos.slice(0, 400).map((e) => ({ monto: e.monto ?? 0, caras: e.caras, campania: e.campania, usuario: e.usuario, fecha: e.fecha })),
-    ediciones: eventos.slice(0, 200),
+    puntos: ediciones.map((e) => ({ monto: e.monto ?? 0, caras: e.caras, campania: e.campania, usuario: e.usuario, fecha: e.fecha })),
+    ediciones,
   };
 }
 
