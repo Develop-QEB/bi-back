@@ -160,6 +160,23 @@ app.get('/reportes/impacto', wrap(async (req, res) => {
 // TEMPORAL: inspección de estructura de `detalles` (se elimina tras analizar).
 app.get('/debug/detalles', wrap(async (req, res) => {
   if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
+  // Prueba de join por caraId → inventario exacto.
+  if (typeof req.query.join === 'string') {
+    const ids = req.query.join.split(',').map((s) => Number(s)).filter((n) => Number.isFinite(n) && n > 0);
+    if (!ids.length) { res.json({ error: 'sin ids' }); return; }
+    const inl = ids.join(',');
+    // ¿caraId = solicitudCaras.id? Resolvemos vía reservas → inventarios.
+    const viaRes = await query(
+      `SELECT r.solicitudCaras_id AS caraId, i.plaza, i.tradicional_digital AS formato, i.tipo_de_mueble AS mueble
+         FROM reservas r JOIN inventarios i ON i.id = r.inventario_id
+        WHERE r.solicitudCaras_id IN (${inl}) AND r.deleted_at IS NULL
+        GROUP BY r.solicitudCaras_id, i.plaza, i.tradicional_digital, i.tipo_de_mueble`
+    );
+    // ¿solicitudCaras trae algo útil directo?
+    const scCols = await query(`SELECT * FROM solicitudCaras WHERE id IN (${inl}) LIMIT 3`);
+    res.json({ viaReservas: viaRes, solicitudCarasMuestra: (scCols as any[]).map((r) => ({ id: r.id, keys: Object.keys(r) })) });
+    return;
+  }
   const rows = await query(
     `SELECT h.id, h.tipo, h.ref_id, h.accion, h.detalles
        FROM historial h
