@@ -144,14 +144,6 @@ app.get('/reportes/opciones', wrap(async (req, res) => {
   res.json(await getOpciones(anio));
 }));
 
-// TEMPORAL: columnas de V_APS_Globales (buscar id de cotización/campaña).
-app.get('/debug/cols', wrap(async (req, res) => {
-  if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
-  const [row] = await pool.query('SELECT * FROM V_APS_Globales LIMIT 1');
-  const cols = Object.keys((row as any[])[0] ?? {});
-  res.json({ cols, sample: (row as any[])[0] ?? null });
-}));
-
 app.get('/reportes/embudo', wrap(async (req, res) => {
   res.json(await getEmbudo(parseFiltrosReporte(req)));
 }));

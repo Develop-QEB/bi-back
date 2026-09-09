@@ -9,6 +9,9 @@ const toISO = (v: unknown): string | null => (v == null ? null : v instanceof Da
 
 const filtroVacio = (anio: number): FiltrosReporte => ({ anio, mes: null, plaza: null, formato: null, mueble: null, cliente: null, asesor: null });
 
+// Limpia el nombre del mueble: quita "RENTA/BONIFICACIÓN DE ESPACIOS ".
+const limpiaMueble = (v: string) => String(v).replace(/^(RENTA|BONIFICACI[OÓ]N) DE ESPACIOS\s*/i, '').trim() || String(v);
+
 /**
  * Dado un nombre de asesor CANÓNICO (normalizado), regresa los valores crudos de
  * la columna indicada que normalizan a él. Permite filtrar por asesor aunque la
@@ -24,7 +27,7 @@ async function vapsWhere(f: FiltrosReporte): Promise<{ where: string; params: Re
   const cond: string[] = ['`Año` = :anio'];
   const p: Record<string, unknown> = { anio: f.anio };
   if (f.mes) { cond.push('`Mes` = :mes'); p.mes = f.mes; }
-  if (f.plaza) { cond.push('`U_dscSitio` = :plaza'); p.plaza = f.plaza; }
+  if (f.plaza) { cond.push('`Nombre de Plaza` = :plaza'); p.plaza = f.plaza; }
   if (f.formato) { cond.push('`Tipo Digital` = :formato'); p.formato = f.formato; }
   if (f.mueble) { cond.push('`Dscription` LIKE :mueble'); p.mueble = `%${f.mueble}%`; }
   if (f.cliente) { cond.push('`U_Cliente` = :cliente'); p.cliente = f.cliente; }
@@ -59,9 +62,9 @@ async function pipelineCond(f: FiltrosReporte, quoteExpr: string): Promise<{ con
     }
   }
   const scCond: string[] = [];
-  if (f.plaza) { scCond.push('sc.estados = :plaza'); p.plaza = f.plaza; }
-  if (f.formato) { scCond.push('sc.tipo = :formato'); p.formato = f.formato; }
-  if (f.mueble) { scCond.push('sc.formato LIKE :mueble'); p.mueble = `%${f.mueble}%`; }
+  if (f.plaza) { scCond.push('sc.estados LIKE :plazaLike'); p.plazaLike = `%${f.plaza}%`; }
+  if (f.formato) { scCond.push('sc.tipo LIKE :formatoLike'); p.formatoLike = `%${f.formato}%`; }
+  if (f.mueble) { scCond.push('sc.formato LIKE :muebleLike'); p.muebleLike = `%${f.mueble}%`; }
   if (scCond.length) {
     cond.push(`EXISTS (SELECT 1 FROM solicitudCaras sc WHERE sc.idquote = ${quoteExpr} AND ${scCond.join(' AND ')})`);
   }
@@ -130,7 +133,7 @@ export async function getCampanias(limit: number, f: FiltrosReporte): Promise<Ca
 
 /** Columna de V_APS_Globales para cada dimensión. */
 const COL_DIM: Record<Dimension, string> = {
-  plaza: 'U_dscSitio',
+  plaza: 'Nombre de Plaza',
   digital: 'Tipo Digital',
   asesor: 'U_Asesor',
   cliente: 'U_Cliente',
@@ -162,7 +165,7 @@ export async function getDistribucion(dim: Dimension, f: FiltrosReporte): Promis
   const base = rows
     .filter((r) => r.v != null && String(r.v).trim() && Number(r.monto) > 0)
     .map((r) => ({
-      nombre: dim === 'mueble' ? String(r.v).replace(/^RENTA DE ESPACIOS\s*/i, '').trim() || String(r.v) : String(r.v).trim(),
+      nombre: dim === 'mueble' ? limpiaMueble(String(r.v)) : String(r.v).trim(),
       monto: Number(r.monto),
       caras: Number(r.caras) || 0,
       n: Number(r.n),
@@ -275,13 +278,13 @@ export async function getOpciones(anio: number): Promise<OpcionesReporte> {
     return rows.map((r) => String(r.v).trim()).filter(Boolean);
   };
   const [plaza, formato, muebleRaw, cliente, asesorRaw] = await Promise.all([
-    distinct('U_dscSitio'), distinct('Tipo Digital'), distinct('Dscription'), distinct('U_Cliente'), distinct('U_Asesor'),
+    distinct('Nombre de Plaza'), distinct('Tipo Digital'), distinct('Dscription'), distinct('U_Cliente'), distinct('U_Asesor'),
   ]);
   const uniqSort = (a: string[]) => [...new Set(a)].sort((x, y) => x.localeCompare(y));
   return {
     plaza: uniqSort(plaza),
     formato: uniqSort(formato),
-    mueble: uniqSort(muebleRaw.map((m) => m.replace(/^RENTA DE ESPACIOS\s*/i, '').trim() || m)),
+    mueble: uniqSort(muebleRaw.map(limpiaMueble)),
     cliente: uniqSort(cliente),
     asesor: uniqSort(asesorRaw.map((a) => normalizaAsesor(a)).filter((a): a is string => !!a)),
   };
