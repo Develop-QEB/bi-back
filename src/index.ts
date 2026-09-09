@@ -2,7 +2,7 @@ import http from 'node:http';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { env } from './env.js';
-import { pool } from './db.js';
+import { pool, query } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
@@ -155,6 +155,21 @@ app.get('/reportes/impacto', wrap(async (req, res) => {
   const desde = typeof req.query.desde === 'string' ? req.query.desde : null;
   const hasta = typeof req.query.hasta === 'string' ? req.query.hasta : null;
   res.json(await getImpacto({ anio, desde, hasta }));
+}));
+
+// TEMPORAL: comparar vocabularios V_APS vs pipeline para diseñar los filtros de Embudo.
+app.get('/debug/vocab', wrap(async (req, res) => {
+  if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
+  const distintos = async (sql: string) => (await query<{ v: string | null; n: number }>(sql)).map((r) => ({ v: r.v, n: Number(r.n) }));
+  const vapsPlaza = await distintos("SELECT `U_dscSitio` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `U_dscSitio` ORDER BY n DESC LIMIT 30");
+  const vapsFormato = await distintos("SELECT `Tipo Digital` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `Tipo Digital` ORDER BY n DESC LIMIT 10");
+  const vapsMueble = await distintos("SELECT `Dscription` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `Dscription` ORDER BY n DESC LIMIT 20");
+  const vapsCliente = await distintos("SELECT `U_Cliente` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `U_Cliente` ORDER BY n DESC LIMIT 15");
+  const vapsAsesor = await distintos("SELECT `U_Asesor` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `U_Asesor` ORDER BY n DESC LIMIT 30");
+  const scEstados = await distintos("SELECT estados v, COUNT(*) n FROM solicitudCaras GROUP BY estados ORDER BY n DESC LIMIT 30");
+  const scTipo = await distintos("SELECT tipo v, COUNT(*) n FROM solicitudCaras GROUP BY tipo ORDER BY n DESC LIMIT 10");
+  const scFormato = await distintos("SELECT formato v, COUNT(*) n FROM solicitudCaras GROUP BY formato ORDER BY n DESC LIMIT 20");
+  res.json({ vapsPlaza, vapsFormato, vapsMueble, vapsCliente, vapsAsesor, scEstados, scTipo, scFormato });
 }));
 
 // --- Objetivos/metas (BD propia escribible, compartidos por el equipo) ---
