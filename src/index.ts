@@ -2,11 +2,12 @@ import http from 'node:http';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { env } from './env.js';
-import { pool, query } from './db.js';
+import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
-import { dimensionValida, getCampanias, getCiclo, getDistribucion, getEmbudo, getVentasPeriodo } from './services/reportes.service.js';
+import { dimensionValida, getCampanias, getCiclo, getDistribucion, getEmbudo, getOpciones, getVentasPeriodo } from './services/reportes.service.js';
+import type { FiltrosReporte } from './types.js';
 import {
   getObjetivos,
   limpiarAsesores as limpiarObjAsesores,
@@ -123,31 +124,48 @@ app.get('/historial/contexto', wrap(async (req, res) => {
 }));
 
 // --- Reportes ---
-app.get('/reportes/embudo', wrap(async (_req, res) => {
-  res.json(await getEmbudo());
+// Parsea la barra de filtros compartida (Embudo) desde el query string.
+function parseFiltrosReporte(req: Request): FiltrosReporte {
+  const str = (k: string) => (typeof req.query[k] === 'string' && (req.query[k] as string).trim() ? (req.query[k] as string).trim() : null);
+  const mes = Number(req.query.mes);
+  return {
+    anio: Number(req.query.anio) || new Date().getFullYear(),
+    mes: Number.isInteger(mes) && mes >= 1 && mes <= 12 ? mes : null,
+    plaza: str('plaza'),
+    formato: str('formato'),
+    mueble: str('mueble'),
+    cliente: str('cliente'),
+    asesor: str('asesor'),
+  };
+}
+
+app.get('/reportes/opciones', wrap(async (req, res) => {
+  const anio = Number(req.query.anio) || new Date().getFullYear();
+  res.json(await getOpciones(anio));
+}));
+
+app.get('/reportes/embudo', wrap(async (req, res) => {
+  res.json(await getEmbudo(parseFiltrosReporte(req)));
 }));
 
 app.get('/reportes/distribucion', wrap(async (req, res) => {
   const dim = String(req.query.dim ?? '');
   if (!dimensionValida(dim)) return res.status(400).json({ error: 'dim inválida' });
-  const anio = Number(req.query.anio) || new Date().getFullYear();
-  res.json(await getDistribucion(dim, anio));
+  res.json(await getDistribucion(dim, parseFiltrosReporte(req)));
 }));
 
 app.get('/reportes/ventas-periodo', wrap(async (req, res) => {
   const per = String(req.query.periodo ?? 'mes');
   if (per !== 'mes' && per !== 'catorcena' && per !== 'semana') return res.status(400).json({ error: 'periodo inválido' });
-  const anio = Number(req.query.anio) || new Date().getFullYear();
-  const asesor = typeof req.query.asesor === 'string' && req.query.asesor.trim() ? req.query.asesor.trim() : null;
-  res.json(await getVentasPeriodo(per, anio, asesor));
+  res.json(await getVentasPeriodo(per, parseFiltrosReporte(req)));
 }));
 
-app.get('/reportes/ciclo', wrap(async (_req, res) => {
-  res.json(await getCiclo());
+app.get('/reportes/ciclo', wrap(async (req, res) => {
+  res.json(await getCiclo(parseFiltrosReporte(req)));
 }));
 
 app.get('/reportes/campanias', wrap(async (req, res) => {
-  res.json(await getCampanias(Number(req.query.limit) || 40));
+  res.json(await getCampanias(Number(req.query.limit) || 120, parseFiltrosReporte(req)));
 }));
 
 app.get('/reportes/impacto', wrap(async (req, res) => {
@@ -155,21 +173,6 @@ app.get('/reportes/impacto', wrap(async (req, res) => {
   const desde = typeof req.query.desde === 'string' ? req.query.desde : null;
   const hasta = typeof req.query.hasta === 'string' ? req.query.hasta : null;
   res.json(await getImpacto({ anio, desde, hasta }));
-}));
-
-// TEMPORAL: comparar vocabularios V_APS vs pipeline para diseñar los filtros de Embudo.
-app.get('/debug/vocab', wrap(async (req, res) => {
-  if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
-  const distintos = async (sql: string) => (await query<{ v: string | null; n: number }>(sql)).map((r) => ({ v: r.v, n: Number(r.n) }));
-  const vapsPlaza = await distintos("SELECT `U_dscSitio` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `U_dscSitio` ORDER BY n DESC LIMIT 30");
-  const vapsFormato = await distintos("SELECT `Tipo Digital` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `Tipo Digital` ORDER BY n DESC LIMIT 10");
-  const vapsMueble = await distintos("SELECT `Dscription` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `Dscription` ORDER BY n DESC LIMIT 20");
-  const vapsCliente = await distintos("SELECT `U_Cliente` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `U_Cliente` ORDER BY n DESC LIMIT 15");
-  const vapsAsesor = await distintos("SELECT `U_Asesor` v, COUNT(*) n FROM V_APS_Globales WHERE `Año`=2026 GROUP BY `U_Asesor` ORDER BY n DESC LIMIT 30");
-  const scEstados = await distintos("SELECT estados v, COUNT(*) n FROM solicitudCaras GROUP BY estados ORDER BY n DESC LIMIT 30");
-  const scTipo = await distintos("SELECT tipo v, COUNT(*) n FROM solicitudCaras GROUP BY tipo ORDER BY n DESC LIMIT 10");
-  const scFormato = await distintos("SELECT formato v, COUNT(*) n FROM solicitudCaras GROUP BY formato ORDER BY n DESC LIMIT 20");
-  res.json({ vapsPlaza, vapsFormato, vapsMueble, vapsCliente, vapsAsesor, scEstados, scTipo, scFormato });
 }));
 
 // --- Objetivos/metas (BD propia escribible, compartidos por el equipo) ---

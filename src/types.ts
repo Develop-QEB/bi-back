@@ -211,6 +211,26 @@ export interface ConteoMonto {
 
 export type Dimension = 'plaza' | 'digital' | 'asesor' | 'cliente' | 'mueble' | 'categoria' | 'marca' | 'producto';
 
+/** Filtros compartidos de los reportes (barra de la tab Embudo). */
+export interface FiltrosReporte {
+  anio: number;
+  mes: number | null;      // 1–12; null = todos
+  plaza: string | null;    // U_dscSitio (V_APS)
+  formato: string | null;  // Tipo Digital
+  mueble: string | null;   // Dscription (limpio)
+  cliente: string | null;  // U_Cliente / razon_social
+  asesor: string | null;   // nombre canónico (normalizado)
+}
+
+/** Opciones para los dropdowns de la barra de filtros. */
+export interface OpcionesReporte {
+  plaza: string[];
+  formato: string[];
+  mueble: string[];
+  cliente: string[];
+  asesor: string[];
+}
+
 export type Periodo = 'mes' | 'catorcena' | 'semana';
 
 /** Ventas reales agregadas por período (para el avance de objetivos). */
