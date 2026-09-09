@@ -160,6 +160,19 @@ app.get('/reportes/impacto', wrap(async (req, res) => {
 // TEMPORAL: inspección de estructura de `detalles` (se elimina tras analizar).
 app.get('/debug/detalles', wrap(async (req, res) => {
   if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
+  // Catálogo de asesores + asesores crudos presentes en las ediciones 2026.
+  if (req.query.asesores === '1') {
+    let cat: any[] = [];
+    try { cat = await query(`SELECT * FROM BI_CRM_Asesor LIMIT 200`); } catch (e: any) { cat = [{ error: String(e?.message || e) }]; }
+    const crudos = await query(
+      `SELECT s.asesor, COUNT(*) n
+         FROM solicitud s
+        WHERE s.asesor IS NOT NULL AND s.asesor <> ''
+        GROUP BY s.asesor ORDER BY n DESC LIMIT 80`
+    );
+    res.json({ catalogoMuestra: (cat as any[]).slice(0, 8), catalogoCols: cat[0] ? Object.keys(cat[0]) : [], catalogoTotal: cat.length, asesoresCrudos: crudos });
+    return;
+  }
   // Prueba de join por caraId → inventario exacto.
   if (typeof req.query.join === 'string') {
     const ids = req.query.join.split(',').map((s) => Number(s)).filter((n) => Number.isFinite(n) && n > 0);
