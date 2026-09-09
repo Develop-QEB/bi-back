@@ -2,7 +2,7 @@ import http from 'node:http';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import cors from 'cors';
 import { env } from './env.js';
-import { pool } from './db.js';
+import { pool, query } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
@@ -155,6 +155,20 @@ app.get('/reportes/impacto', wrap(async (req, res) => {
   const desde = typeof req.query.desde === 'string' ? req.query.desde : null;
   const hasta = typeof req.query.hasta === 'string' ? req.query.hasta : null;
   res.json(await getImpacto({ anio, desde, hasta }));
+}));
+
+// TEMPORAL: inspección de estructura de `detalles` (se elimina tras analizar).
+app.get('/debug/detalles', wrap(async (req, res) => {
+  if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
+  const rows = await query(
+    `SELECT h.id, h.tipo, h.ref_id, h.accion, h.detalles
+       FROM historial h
+      WHERE h.fecha_hora >= '2026-01-01' AND h.fecha_hora < '2027-01-01'
+        AND JSON_VALID(h.detalles) AND h.detalles LIKE '%"cambios"%'
+        AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%otal%')
+      ORDER BY h.id DESC LIMIT 14`
+  );
+  res.json(rows);
 }));
 
 // --- Objetivos/metas (BD propia escribible, compartidos por el equipo) ---
