@@ -1,5 +1,6 @@
 import { query } from '../db.js';
 import { normalizaAsesor } from '../lib/asesores.js';
+import { normalizaPlaza } from '../lib/plazas.js';
 import type {
   CategoriaAccion,
   ConteoNombre,
@@ -435,7 +436,7 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
       String(v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
     for (const r of scRows) {
       scMap.set(Number(r.id), {
-        plazas: r.estados && String(r.estados).trim() ? [String(r.estados).trim()] : [],
+        plazas: normalizaPlaza(r.estados),
         formatos: r.tipo && String(r.tipo).trim() ? [String(r.tipo).trim()] : [],
         muebles: lista(r.formato),
       });
