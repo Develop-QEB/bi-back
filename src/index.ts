@@ -173,8 +173,10 @@ app.get('/debug/detalles', wrap(async (req, res) => {
         GROUP BY r.solicitudCaras_id, i.plaza, i.tradicional_digital, i.tipo_de_mueble`
     );
     // ¿solicitudCaras trae algo útil directo?
-    const scCols = await query(`SELECT * FROM solicitudCaras WHERE id IN (${inl}) LIMIT 3`);
-    res.json({ viaReservas: viaRes, solicitudCarasMuestra: (scCols as any[]).map((r) => ({ id: r.id, keys: Object.keys(r) })) });
+    const scCols = await query(
+      `SELECT id, idquote, ciudad, estados, tipo, formato, articulo, caras FROM solicitudCaras WHERE id IN (${inl})`
+    );
+    res.json({ viaReservas: viaRes, solicitudCaras: scCols });
     return;
   }
   const rows = await query(
