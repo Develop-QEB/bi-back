@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { normalizaAsesor } from '../lib/asesores.js';
 import type { CampaniaDetalle, Ciclo, ConteoMonto, ConteoNombre, ConteoPeriodo, Dimension, Embudo, EtapaEmbudo, Periodo } from '../types.js';
 
 const toISO = (v: unknown): string | null => (v == null ? null : v instanceof Date ? v.toISOString() : String(v));
@@ -76,16 +77,18 @@ export function dimensionValida(d: string): d is Dimension {
 /** Distribución de monto/caras por una dimensión, en un año. Ranking desc. */
 export async function getDistribucion(dim: Dimension, anio: number): Promise<ConteoMonto[]> {
   const col = COL_DIM[dim];
+  // El asesor trae variantes del mismo nombre → traemos más filas para fusionar sin perder cola.
+  const limite = dim === 'asesor' ? 200 : 30;
   const rows = await query<{ v: string | null; monto: string; caras: string | null; n: number }>(
     `SELECT \`${col}\` v, SUM(\`Monto Total\`) monto, SUM(\`Caras\`) caras, COUNT(*) n
        FROM V_APS_Globales
       WHERE \`Año\` = :anio AND \`${col}\` IS NOT NULL
       GROUP BY \`${col}\`
       ORDER BY monto DESC
-      LIMIT 30`,
+      LIMIT ${limite}`,
     { anio }
   );
-  return rows
+  const base = rows
     .filter((r) => r.v != null && String(r.v).trim() && Number(r.monto) > 0)
     .map((r) => ({
       nombre: dim === 'mueble' ? String(r.v).replace(/^RENTA DE ESPACIOS\s*/i, '').trim() || String(r.v) : String(r.v).trim(),
@@ -93,6 +96,18 @@ export async function getDistribucion(dim: Dimension, anio: number): Promise<Con
       caras: Number(r.caras) || 0,
       n: Number(r.n),
     }));
+
+  if (dim !== 'asesor') return base;
+
+  // Fusiona variantes del mismo asesor (mayúsculas/acentos/sufijos/apellidos) y re-ordena.
+  const merged = new Map<string, ConteoMonto>();
+  for (const r of base) {
+    const nombre = normalizaAsesor(r.nombre) ?? r.nombre;
+    const ex = merged.get(nombre) ?? { nombre, monto: 0, caras: 0, n: 0 };
+    ex.monto += r.monto; ex.caras += r.caras; ex.n += r.n;
+    merged.set(nombre, ex);
+  }
+  return [...merged.values()].sort((a, b) => b.monto - a.monto).slice(0, 30);
 }
 
 /**

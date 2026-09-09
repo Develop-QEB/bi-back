@@ -1,4 +1,5 @@
 import { query } from '../db.js';
+import { normalizaAsesor } from '../lib/asesores.js';
 import type {
   CategoriaAccion,
   ConteoNombre,
@@ -71,6 +72,8 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let campania: string | null = row.campania_nombre ?? null;
   let descripcion = '';
 
+  let caraIds: number[] | undefined;
+
   let json: any = null;
   const raw = row.detalles ?? '';
   if (raw.trim().startsWith('{') || raw.trim().startsWith('[')) {
@@ -88,6 +91,9 @@ export function parseEvento(row: RowEvento): EventoHistorial {
 
     if (Array.isArray(json.cambios)) {
       const campoDe = (c: any) => String(c?.campo ?? c?.label ?? '');
+      // caraId de cada cambio = solicitudCaras.id de la cara editada (atribución exacta).
+      const ids = [...new Set(json.cambios.map((c: any) => Number(c?.caraId)).filter((n: number) => Number.isFinite(n) && n > 0))] as number[];
+      if (ids.length) caraIds = ids;
       const est = json.cambios.find((c: any) => /estado/i.test(campoDe(c)));
       if (est) { estadoAntes = est.antes ?? null; estadoDespues = est.despues ?? null; }
 
@@ -140,6 +146,7 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     invAntes,
     invDespues,
     descripcion: descripcion || `${row.tipo} · ${row.accion}`,
+    caraIds,
   };
 }
 
@@ -376,74 +383,81 @@ export async function getResumen(f: Pick<FiltrosHistorial, 'desde' | 'hasta'>): 
 }
 
 /**
- * Enriquece ediciones con los atributos de su campaña (cliente, asesor, plazas,
- * formatos, muebles) — para los filtros del dashboard del jefe. "Aproximado por
- * campaña": el historial no guarda qué plaza/formato/mueble se editó en cada
- * registro, así que asociamos TODAS las plazas/formatos/muebles reservados de la
- * campaña (o propuesta) a cada edición suya.
+ * Enriquece ediciones con atributos EXACTOS de las caras editadas — para los
+ * filtros del dashboard del jefe. Cada `cambio` del historial trae `caraId`
+ * (= solicitudCaras.id), así que sabemos exactamente qué caras se tocaron:
+ *   • Plaza  ← solicitudCaras.estados  (p.ej. "GUADALAJARA", "Ciudad de México / AM")
+ *   • Formato← solicitudCaras.tipo     (Tradicional / Digital)
+ *   • Mueble ← solicitudCaras.formato  (PARABUS / COLUMNA / "PARABUS, MUPIS, …")
+ * Cliente/asesor son de la campaña (propuesta→solicitud); el asesor se normaliza.
  *
  * ref_id de un evento de Propuesta ya es el idquote; el de Campaña se traduce a
  * su cotizacion_id (= idquote). Todo SOLO SELECT.
  */
 async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
   const refIds = [...new Set(eventos.map((e) => Number(e.refId)).filter((n) => Number.isFinite(n) && n > 0))];
-  if (!refIds.length) return;
-  const inRefs = refIds.join(',');
 
   // ref_id de Campaña → cotizacion_id (idquote). Para Propuesta, ref_id ya es el idquote.
-  const camps = await query<{ id: number; cotizacion_id: number | null }>(
-    `SELECT id, cotizacion_id FROM campania WHERE id IN (${inRefs})`
-  );
   const camp2cotiz = new Map<number, number>();
-  for (const c of camps) if (c.cotizacion_id != null) camp2cotiz.set(Number(c.id), Number(c.cotizacion_id));
+  if (refIds.length) {
+    const camps = await query<{ id: number; cotizacion_id: number | null }>(
+      `SELECT id, cotizacion_id FROM campania WHERE id IN (${refIds.join(',')})`
+    );
+    for (const c of camps) if (c.cotizacion_id != null) camp2cotiz.set(Number(c.id), Number(c.cotizacion_id));
+  }
   const quoteDe = (refId: number | null): number | null => {
     const r = Number(refId);
     if (!Number.isFinite(r) || r <= 0) return null;
     return camp2cotiz.get(r) ?? r;
   };
 
+  // Cliente / asesor (normalizado) de la propuesta (idquote = propuesta.id).
   const quoteIds = [...new Set(eventos.map((e) => quoteDe(e.refId)).filter((n): n is number => n != null))];
-  if (!quoteIds.length) return;
-  const inQuotes = quoteIds.join(',');
-
-  // Cliente / asesor de la propuesta (idquote = propuesta.id).
-  const propRows = await query<{ q: number; cliente: string | null; asesor: string | null }>(
-    `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor
-       FROM propuesta p
-       LEFT JOIN solicitud s ON s.id = p.solicitud_id
-      WHERE p.id IN (${inQuotes})`
-  );
   const propMap = new Map<number, { cliente: string | null; asesor: string | null }>();
-  for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: r.asesor ?? null });
+  if (quoteIds.length) {
+    const propRows = await query<{ q: number; cliente: string | null; asesor: string | null }>(
+      `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor
+         FROM propuesta p
+         LEFT JOIN solicitud s ON s.id = p.solicitud_id
+        WHERE p.id IN (${quoteIds.join(',')})`
+    );
+    for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: normalizaAsesor(r.asesor) });
+  }
 
-  // Plaza / formato / mueble reservados de la campaña (join verificado, ~1s/400 quotes).
-  const attrRows = await query<{ q: number; plaza: string | null; formato: string | null; mueble: string | null }>(
-    `SELECT sc.idquote AS q, i.plaza AS plaza, i.tradicional_digital AS formato, i.tipo_de_mueble AS mueble
-       FROM solicitudCaras sc
-       JOIN reservas r ON r.solicitudCaras_id = sc.id AND r.deleted_at IS NULL
-       JOIN inventarios i ON i.id = r.inventario_id
-      WHERE sc.idquote IN (${inQuotes})
-      GROUP BY sc.idquote, i.plaza, i.tradicional_digital, i.tipo_de_mueble`
-  );
-  const attrMap = new Map<number, { plazas: Set<string>; formatos: Set<string>; muebles: Set<string> }>();
-  for (const r of attrRows) {
-    const q = Number(r.q);
-    const a = attrMap.get(q) ?? { plazas: new Set<string>(), formatos: new Set<string>(), muebles: new Set<string>() };
-    if (r.plaza && String(r.plaza).trim()) a.plazas.add(String(r.plaza).trim());
-    if (r.formato && String(r.formato).trim()) a.formatos.add(String(r.formato).trim());
-    if (r.mueble && String(r.mueble).trim()) a.muebles.add(String(r.mueble).trim());
-    attrMap.set(q, a);
+  // Atributos EXACTOS por cara editada (solicitudCaras.id = caraId).
+  const caraIds = [...new Set(eventos.flatMap((e) => e.caraIds ?? []).filter((n) => Number.isFinite(n) && n > 0))];
+  const scMap = new Map<number, { plazas: string[]; formatos: string[]; muebles: string[] }>();
+  if (caraIds.length) {
+    const scRows = await query<{ id: number; estados: string | null; tipo: string | null; formato: string | null }>(
+      `SELECT id, estados, tipo, formato FROM solicitudCaras WHERE id IN (${caraIds.join(',')})`
+    );
+    const lista = (v: string | null): string[] =>
+      String(v ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    for (const r of scRows) {
+      scMap.set(Number(r.id), {
+        plazas: r.estados && String(r.estados).trim() ? [String(r.estados).trim()] : [],
+        formatos: r.tipo && String(r.tipo).trim() ? [String(r.tipo).trim()] : [],
+        muebles: lista(r.formato),
+      });
+    }
   }
 
   for (const e of eventos) {
     const q = quoteDe(e.refId);
-    if (q == null) continue;
-    const p = propMap.get(q);
+    const p = q != null ? propMap.get(q) : undefined;
     if (p) { e.cliente = p.cliente; e.asesor = p.asesor; }
-    const a = attrMap.get(q);
-    e.plazas = a ? [...a.plazas] : [];
-    e.formatos = a ? [...a.formatos] : [];
-    e.muebles = a ? [...a.muebles] : [];
+    // Unión de atributos sobre las caras realmente editadas.
+    const plazas = new Set<string>(), formatos = new Set<string>(), muebles = new Set<string>();
+    for (const id of e.caraIds ?? []) {
+      const a = scMap.get(id);
+      if (!a) continue;
+      a.plazas.forEach((x) => plazas.add(x));
+      a.formatos.forEach((x) => formatos.add(x));
+      a.muebles.forEach((x) => muebles.add(x));
+    }
+    e.plazas = [...plazas];
+    e.formatos = [...formatos];
+    e.muebles = [...muebles];
   }
 }
 
