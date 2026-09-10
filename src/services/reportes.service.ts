@@ -1,5 +1,6 @@
 import { query } from '../db.js';
 import { normalizaAsesor } from '../lib/asesores.js';
+import { normalizaPlaza } from '../lib/plazas.js';
 import type {
   CampaniaDetalle, Ciclo, ConteoMonto, ConteoNombre, ConteoPeriodo, Dimension,
   Embudo, EtapaEmbudo, FiltrosReporte, OpcionesReporte, Periodo,
@@ -27,7 +28,8 @@ async function vapsWhere(f: FiltrosReporte): Promise<{ where: string; params: Re
   const cond: string[] = ['`Año` = :anio'];
   const p: Record<string, unknown> = { anio: f.anio };
   if (f.mes) { cond.push('`Mes` = :mes'); p.mes = f.mes; }
-  if (f.plaza) { cond.push('`Nombre de Plaza` = :plaza'); p.plaza = f.plaza; }
+  // V_APS no tiene plaza limpia; aproximamos por municipio dentro de `Nombre de Plaza`.
+  if (f.plaza) { cond.push('`Nombre de Plaza` LIKE :plaza'); p.plaza = `%${f.plaza}%`; }
   if (f.formato) { cond.push('`Tipo Digital` = :formato'); p.formato = f.formato; }
   if (f.mueble) { cond.push('`Dscription` LIKE :mueble'); p.mueble = `%${f.mueble}%`; }
   if (f.cliente) { cond.push('`U_Cliente` = :cliente'); p.cliente = f.cliente; }
@@ -133,7 +135,7 @@ export async function getCampanias(limit: number, f: FiltrosReporte): Promise<Ca
 
 /** Columna de V_APS_Globales para cada dimensión. */
 const COL_DIM: Record<Dimension, string> = {
-  plaza: 'Nombre de Plaza',
+  plaza: 'U_dscSitio',
   digital: 'Tipo Digital',
   asesor: 'U_Asesor',
   cliente: 'U_Cliente',
@@ -268,23 +270,34 @@ export async function getEmbudo(f: FiltrosReporte): Promise<Embudo> {
   };
 }
 
-/** Valores distintos (para los dropdowns de la barra de filtros). */
+/**
+ * Valores distintos para los dropdowns. Plaza/formato/mueble LIMPIOS vienen del
+ * pipeline (solicitudCaras) — V_APS no los tiene limpios. Cliente/asesor de V_APS.
+ */
 export async function getOpciones(anio: number): Promise<OpcionesReporte> {
-  const distinct = async (col: string) => {
+  const distinctVaps = async (col: string) => {
     const rows = await query<{ v: string | null }>(
       `SELECT DISTINCT \`${col}\` v FROM V_APS_Globales WHERE \`Año\` = :anio AND \`${col}\` IS NOT NULL`,
       { anio }
     );
     return rows.map((r) => String(r.v).trim()).filter(Boolean);
   };
-  const [plaza, formato, muebleRaw, cliente, asesorRaw] = await Promise.all([
-    distinct('Nombre de Plaza'), distinct('Tipo Digital'), distinct('Dscription'), distinct('U_Cliente'), distinct('U_Asesor'),
+  const [scRows, cliente, asesorRaw] = await Promise.all([
+    query<{ estados: string | null; tipo: string | null; formato: string | null }>('SELECT DISTINCT estados, tipo, formato FROM solicitudCaras'),
+    distinctVaps('U_Cliente'),
+    distinctVaps('U_Asesor'),
   ]);
-  const uniqSort = (a: string[]) => [...new Set(a)].sort((x, y) => x.localeCompare(y));
+  const plazaSet = new Set<string>(), formatoSet = new Set<string>(), muebleSet = new Set<string>();
+  for (const r of scRows) {
+    normalizaPlaza(r.estados).forEach((x) => plazaSet.add(x));
+    if (r.tipo && r.tipo.trim()) formatoSet.add(r.tipo.trim());
+    String(r.formato ?? '').split(',').map((x) => limpiaMueble(x.trim())).filter(Boolean).forEach((m) => muebleSet.add(m));
+  }
+  const uniqSort = (a: Iterable<string>) => [...new Set(a)].sort((x, y) => x.localeCompare(y));
   return {
-    plaza: uniqSort(plaza),
-    formato: uniqSort(formato),
-    mueble: uniqSort(muebleRaw.map(limpiaMueble)),
+    plaza: uniqSort(plazaSet),
+    formato: uniqSort(formatoSet),
+    mueble: uniqSort(muebleSet),
     cliente: uniqSort(cliente),
     asesor: uniqSort(asesorRaw.map((a) => normalizaAsesor(a)).filter((a): a is string => !!a)),
   };
