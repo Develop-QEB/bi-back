@@ -19,8 +19,9 @@ const limpiaMueble = (v: string) => String(v).replace(/^(RENTA|BONIFICACI[OÓ]N)
  * BD guarde muchas variantes (MAYÚS/acentos/sufijos/apellidos).
  */
 async function variantesAsesor(canonico: string, sql: string): Promise<string[]> {
+  const objetivo = normalizaAsesor(canonico); // normaliza también el parámetro (unicode descompuesto/casing)
   const rows = await query<{ a: string | null }>(sql);
-  return [...new Set(rows.map((r) => r.a).filter((a): a is string => !!a && normalizaAsesor(a) === canonico))];
+  return [...new Set(rows.map((r) => r.a).filter((a): a is string => !!a && normalizaAsesor(a) === objetivo))];
 }
 
 // ---------- Filtro para V_APS_Globales (ventas cerradas) ----------
