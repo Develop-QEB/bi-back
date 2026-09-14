@@ -240,6 +240,26 @@ export async function getVentasPeriodo(periodo: Periodo, f: FiltrosReporte): Pro
     .map((r) => ({ periodo: Number(r.periodo), monto: Number(r.monto) || 0, caras: Number(r.caras) || 0 }));
 }
 
+/** Calendario de catorcenas del año (desde V_APS: Periodo + Fecha Ini/Fin Periodo). */
+export async function getCatorcenas(anio: number): Promise<{ catorcena: number; ini: string | null; fin: string | null; etiqueta: string }[]> {
+  const rows = await query<{ p: string; ini: Date | string | null; fin: Date | string | null }>(
+    `SELECT DISTINCT \`Periodo\` p, \`Fecha Ini Periodo\` ini, \`Fecha Fin Periodo\` fin
+       FROM V_APS_Globales
+      WHERE \`Año\` = :anio AND \`Periodo\` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %'`,
+    { anio }
+  );
+  const map = new Map<number, { ini: string | null; fin: string | null }>();
+  for (const r of rows) {
+    const m = /(\d+)/.exec(String(r.p));
+    if (!m) continue;
+    const cat = Number(m[1]);
+    if (!map.has(cat)) map.set(cat, { ini: toISO(r.ini), fin: toISO(r.fin) });
+  }
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([catorcena, v]) => ({ catorcena, ini: v.ini, fin: v.fin, etiqueta: `Cat ${catorcena}` }));
+}
+
 /** Venta real total (SUM Monto Total de V_APS) según el alcance filtrado. */
 export async function getVentaTotal(f: FiltrosReporte): Promise<number> {
   const { where, params } = await vapsWhere(f);
