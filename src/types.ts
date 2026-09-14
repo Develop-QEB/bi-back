@@ -220,6 +220,10 @@ export interface FiltrosReporte {
   mueble: string | null;   // Dscription (limpio)
   cliente: string | null;  // U_Cliente / razon_social
   asesor: string | null;   // nombre canónico (normalizado)
+  // Multi-selección de período (para V_APS: venta real del período). Vacío = todos.
+  meses?: number[];        // 1–12
+  catorcenas?: number[];   // número de catorcena
+  semanas?: number[];      // semana ISO
 }
 
 /** Opciones para los dropdowns de la barra de filtros. */

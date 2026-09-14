@@ -127,6 +127,10 @@ app.get('/historial/contexto', wrap(async (req, res) => {
 // Parsea la barra de filtros compartida (Embudo) desde el query string.
 function parseFiltrosReporte(req: Request): FiltrosReporte {
   const str = (k: string) => (typeof req.query[k] === 'string' && (req.query[k] as string).trim() ? (req.query[k] as string).trim() : null);
+  const nums = (k: string) => {
+    const v = str(k);
+    return v ? v.split(',').map((n) => Number(n)).filter((n) => Number.isFinite(n)) : [];
+  };
   const mes = Number(req.query.mes);
   return {
     anio: Number(req.query.anio) || new Date().getFullYear(),
@@ -136,6 +140,9 @@ function parseFiltrosReporte(req: Request): FiltrosReporte {
     mueble: str('mueble'),
     cliente: str('cliente'),
     asesor: str('asesor'),
+    meses: nums('meses'),
+    catorcenas: nums('catorcenas'),
+    semanas: nums('semanas'),
   };
 }
 

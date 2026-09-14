@@ -29,6 +29,18 @@ async function vapsWhere(f: FiltrosReporte): Promise<{ where: string; params: Re
   const cond: string[] = ['`Año` = :anio'];
   const p: Record<string, unknown> = { anio: f.anio };
   if (f.mes) { cond.push('`Mes` = :mes'); p.mes = f.mes; }
+  // Multi-selección de período (sobre la venta real del período).
+  const enteros = (a?: number[]) => (a ?? []).filter((n) => Number.isFinite(n));
+  const meses = enteros(f.meses), catorcenas = enteros(f.catorcenas), semanas = enteros(f.semanas);
+  if (meses.length) cond.push(`\`Mes\` IN (${meses.join(',')})`);
+  if (catorcenas.length) {
+    cond.push("`Periodo` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %'");
+    cond.push(`CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(\`Periodo\`,' ',-1),'-',1) AS UNSIGNED) IN (${catorcenas.join(',')})`);
+  }
+  if (semanas.length) {
+    cond.push('`Fecha` IS NOT NULL');
+    cond.push(`WEEK(\`Fecha\`, 3) IN (${semanas.join(',')})`);
+  }
   // V_APS no tiene plaza limpia; aproximamos por municipio dentro de `Nombre de Plaza`.
   if (f.plaza) { cond.push('`Nombre de Plaza` LIKE :plaza'); p.plaza = `%${f.plaza}%`; }
   if (f.formato) { cond.push('`Tipo Digital` = :formato'); p.formato = f.formato; }
