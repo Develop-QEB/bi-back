@@ -109,10 +109,10 @@ export async function getCampanias(limit: number, f: FiltrosReporte): Promise<Ca
   const { cond, params } = await pipelineCond(f, 'p.id');
   const rows = await query<{
     id: number; nombre: string; status: string | null; total_caras: string | null; inversion: string | null;
-    fecha_inicio: Date | null; fecha_fin: Date | null; cliente: string | null; asesor: string | null;
+    fecha_inicio: Date | null; fecha_fin: Date | null; fecha_creacion: Date | null; cliente: string | null; asesor: string | null;
   }>(
     `SELECT ca.id, ca.nombre, ca.status, ca.total_caras, p.inversion, ca.fecha_inicio, ca.fecha_fin,
-            s.razon_social cliente, s.asesor
+            p.fecha AS fecha_creacion, s.razon_social cliente, s.asesor
        FROM campania ca
        JOIN propuesta p ON p.id = ca.cotizacion_id
        JOIN solicitud s ON s.id = p.solicitud_id
@@ -129,6 +129,7 @@ export async function getCampanias(limit: number, f: FiltrosReporte): Promise<Ca
     monto: Number(r.inversion) || 0,
     fechaInicio: toISO(r.fecha_inicio),
     fechaFin: toISO(r.fecha_fin),
+    fechaCreacion: toISO(r.fecha_creacion),
     cliente: r.cliente,
     asesor: normalizaAsesor(r.asesor) ?? r.asesor,
   }));

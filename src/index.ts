@@ -155,6 +155,27 @@ app.get('/debug/campcols', wrap(async (req, res) => {
   res.json({ cols: Object.keys((row as any[])[0] ?? {}), sample: (row as any[])[0] ?? null });
 }));
 
+// TEMPORAL: por qué el filtro de asesor con acentos regresa vacío.
+app.get('/debug/asesor', wrap(async (req, res) => {
+  if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
+  const a = String(req.query.a ?? '');
+  const { normalizaAsesor } = await import('./lib/asesores.js');
+  const objetivo = normalizaAsesor(a);
+  const [rows] = await pool.query("SELECT DISTINCT asesor FROM solicitud WHERE asesor IS NOT NULL AND asesor <> '' LIMIT 200");
+  const all = (rows as { asesor: string }[]).map((r) => r.asesor);
+  const matched = all.filter((v) => normalizaAsesor(v) === objetivo);
+  const conLeonor = all.filter((v) => /leonor/i.test(v)).map((v) => ({ raw: v, norm: normalizaAsesor(v), codepoints: [...v].map((c) => c.codePointAt(0)!.toString(16)).join(' ') }));
+  res.json({
+    recibido: a,
+    recibidoCodepoints: [...a].map((c) => c.codePointAt(0)!.toString(16)).join(' '),
+    objetivo,
+    objetivoCodepoints: [...(objetivo ?? '')].map((c) => c.codePointAt(0)!.toString(16)).join(' '),
+    totalDistinct: all.length,
+    matched,
+    conLeonor,
+  });
+}));
+
 app.get('/reportes/embudo', wrap(async (req, res) => {
   res.json(await getEmbudo(parseFiltrosReporte(req)));
 }));

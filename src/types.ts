@@ -258,6 +258,8 @@ export interface CampaniaDetalle {
   monto: number;
   fechaInicio: string | null;
   fechaFin: string | null;
+  /** Fecha de creación (propuesta.fecha; campania no tiene columna propia). */
+  fechaCreacion: string | null;
   cliente: string | null;
   asesor: string | null;
 }
