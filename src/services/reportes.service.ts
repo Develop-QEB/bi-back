@@ -239,6 +239,16 @@ export async function getVentasPeriodo(periodo: Periodo, f: FiltrosReporte): Pro
     .map((r) => ({ periodo: Number(r.periodo), monto: Number(r.monto) || 0, caras: Number(r.caras) || 0 }));
 }
 
+/** Venta real total (SUM Monto Total de V_APS) según el alcance filtrado. */
+export async function getVentaTotal(f: FiltrosReporte): Promise<number> {
+  const { where, params } = await vapsWhere(f);
+  const [r] = await query<{ total: string | null }>(
+    `SELECT SUM(\`Monto Total\`) total FROM V_APS_Globales WHERE ${where}`,
+    params
+  );
+  return Number(r?.total) || 0;
+}
+
 export async function getEmbudo(f: FiltrosReporte): Promise<Embudo> {
   const [sol, prop, camp] = await Promise.all([
     conteoStatus('solicitud', f),

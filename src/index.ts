@@ -6,7 +6,7 @@ import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
-import { dimensionValida, getCampanias, getCiclo, getDistribucion, getEmbudo, getOpciones, getVentasPeriodo } from './services/reportes.service.js';
+import { dimensionValida, getCampanias, getCiclo, getDistribucion, getEmbudo, getOpciones, getVentasPeriodo, getVentaTotal } from './services/reportes.service.js';
 import type { FiltrosReporte } from './types.js';
 import {
   getObjetivos,
@@ -142,6 +142,17 @@ function parseFiltrosReporte(req: Request): FiltrosReporte {
 app.get('/reportes/opciones', wrap(async (req, res) => {
   const anio = Number(req.query.anio) || new Date().getFullYear();
   res.json(await getOpciones(anio));
+}));
+
+app.get('/reportes/venta-total', wrap(async (req, res) => {
+  res.json({ total: await getVentaTotal(parseFiltrosReporte(req)) });
+}));
+
+// TEMPORAL: columnas de la tabla campania (para saber el nombre de la fecha de creación).
+app.get('/debug/campcols', wrap(async (req, res) => {
+  if (req.query.k !== 'insp_9f3c2x') { res.status(404).end(); return; }
+  const [row] = await pool.query('SELECT * FROM campania ORDER BY id DESC LIMIT 1');
+  res.json({ cols: Object.keys((row as any[])[0] ?? {}), sample: (row as any[])[0] ?? null });
 }));
 
 app.get('/reportes/embudo', wrap(async (req, res) => {
