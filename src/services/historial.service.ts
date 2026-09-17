@@ -74,6 +74,8 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let descripcion = '';
 
   let caraIds: number[] | undefined;
+  let cambioPeriodo = false;
+  let hayTarifaEdit = false;
 
   let json: any = null;
   const raw = row.detalles ?? '';
@@ -100,7 +102,7 @@ export function parseEvento(row: RowEvento): EventoHistorial {
 
       // Una edición toca MUCHAS caras (una fila por cara y por campo). Agregamos
       // antes/después de todas para el ANTES→DESPUÉS real y el delta correcto.
-      let cA = 0, cD = 0, iA = 0, iD = 0, hayCaras = false, hayInv = false;
+      let cA = 0, cD = 0, iA = 0, iD = 0, hayCaras = false, hayInv = false, hayTarifa = false;
       for (const c of json.cambios) {
         const campo = String(c?.campo ?? '').toLowerCase();
         const label = String(c?.label ?? '').toLowerCase();
@@ -110,8 +112,13 @@ export function parseEvento(row: RowEvento): EventoHistorial {
           // Solo "costo/Inversión" (importe total de la cara). tarifa_publica es
           // precio unitario — no se suma para no inflar la inversión.
           iA += num(c.antes); iD += num(c.despues); hayInv = true;
+        } else if (/periodo|catorcena/.test(campo) || /periodo|catorcena/.test(label)) {
+          cambioPeriodo = true;
+        } else if (/tarifa/.test(campo) || /tarifa/.test(label)) {
+          hayTarifa = true;
         }
       }
+      hayTarifaEdit = hayInv || hayTarifa;
       if (hayCaras) { carasAntes = cA; carasDespues = cD; caras = cD - cA; }
       if (hayInv) {
         invAntes = iA; invDespues = iD;
@@ -128,6 +135,21 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     descripcion = String(raw).trim();
     usuario = usuarioDeTexto(descripcion);
   }
+
+  // Tipo de edición legible (para la columna "Tipo" del historial). Prioridad:
+  // eliminación > cambio de periodo > caras > tarifa > estado/otro.
+  let tipoEdicion: string;
+  if (categoria === 'eliminacion') tipoEdicion = 'Eliminar circuito';
+  else if (categoria === 'rechazo') tipoEdicion = 'Rechazo';
+  else if (cambioPeriodo) tipoEdicion = 'Cambio de periodo';
+  else if (carasAntes != null && caras > 0) tipoEdicion = 'Alza de caras';
+  else if (carasAntes != null && caras < 0) tipoEdicion = 'Baja de caras';
+  else if (hayTarifaEdit) tipoEdicion = 'Edición de tarifa';
+  else if (categoria === 'autorizacion') tipoEdicion = 'Autorización';
+  else if (categoria === 'cambio_estado') tipoEdicion = 'Cambio de estado';
+  else if (categoria === 'creacion') tipoEdicion = 'Creación';
+  else if (categoria === 'post_sap') tipoEdicion = 'POST a SAP';
+  else tipoEdicion = 'Otro';
 
   return {
     id: Number(row.id),
@@ -148,6 +170,7 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     invDespues,
     descripcion: descripcion || `${row.tipo} · ${row.accion}`,
     caraIds,
+    tipoEdicion,
   };
 }
 
@@ -414,15 +437,15 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
 
   // Cliente / asesor (normalizado) de la propuesta (idquote = propuesta.id).
   const quoteIds = [...new Set(eventos.map((e) => quoteDe(e.refId)).filter((n): n is number => n != null))];
-  const propMap = new Map<number, { cliente: string | null; asesor: string | null }>();
+  const propMap = new Map<number, { cliente: string | null; asesor: string | null; marca: string | null }>();
   if (quoteIds.length) {
-    const propRows = await query<{ q: number; cliente: string | null; asesor: string | null }>(
-      `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor
+    const propRows = await query<{ q: number; cliente: string | null; asesor: string | null; marca: string | null }>(
+      `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor, s.marca_nombre AS marca
          FROM propuesta p
          LEFT JOIN solicitud s ON s.id = p.solicitud_id
         WHERE p.id IN (${quoteIds.join(',')})`
     );
-    for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: normalizaAsesor(r.asesor) });
+    for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: normalizaAsesor(r.asesor), marca: r.marca ?? null });
   }
 
   // Atributos EXACTOS por cara editada (solicitudCaras.id = caraId).
@@ -446,7 +469,7 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
   for (const e of eventos) {
     const q = quoteDe(e.refId);
     const p = q != null ? propMap.get(q) : undefined;
-    if (p) { e.cliente = p.cliente; e.asesor = p.asesor; }
+    if (p) { e.cliente = p.cliente; e.asesor = p.asesor; e.marca = p.marca; }
     // Unión de atributos sobre las caras realmente editadas.
     const plazas = new Set<string>(), formatos = new Set<string>(), muebles = new Set<string>();
     for (const id of e.caraIds ?? []) {

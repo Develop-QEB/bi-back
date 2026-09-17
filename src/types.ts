@@ -108,11 +108,14 @@ export interface EventoHistorial {
   invAntes: number | null;
   invDespues: number | null;
   descripcion: string; // texto legible
+  /** Tipo de edición legible: Eliminar circuito / Alza de caras / Edición de tarifa / Cambio de periodo / … */
+  tipoEdicion?: string;
   // ids de las caras editadas (solicitudCaras.id) — permiten atribución exacta.
   caraIds?: number[];
   // Atributos EXACTOS de las caras editadas (solo en /reportes/impacto, filtros del jefe).
   cliente?: string | null;
   asesor?: string | null;
+  marca?: string | null;
   plazas?: string[];
   formatos?: string[];
   muebles?: string[];

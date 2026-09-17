@@ -282,6 +282,28 @@ export async function getVentaTotal(f: FiltrosReporte): Promise<number> {
   return Number(r?.total) || 0;
 }
 
+/**
+ * Promedios de tarifa según el alcance filtrado (V_APS):
+ *  - efectiva = SUM(Monto Total) / SUM(Caras)  (lo realmente cobrado por cara)
+ *  - publica  = SUM(Tarifa × Caras) / SUM(Caras)  (tarifa de lista promedio ponderada)
+ *  - descuentoPct = (publica − efectiva) / publica
+ */
+export async function getTarifas(f: FiltrosReporte): Promise<{ efectiva: number; publica: number; descuentoPct: number; caras: number; monto: number }> {
+  const { where, params } = await vapsWhere(f);
+  const [r] = await query<{ mt: string | null; caras: string | null; tc: string | null }>(
+    `SELECT SUM(\`Monto Total\`) mt, SUM(\`Caras\`) caras, SUM(\`Tarifa\` * \`Caras\`) tc
+       FROM V_APS_Globales WHERE ${where}`,
+    params
+  );
+  const monto = Number(r?.mt) || 0;
+  const caras = Number(r?.caras) || 0;
+  const tc = Number(r?.tc) || 0;
+  const efectiva = caras ? monto / caras : 0;
+  const publica = caras ? tc / caras : 0;
+  const descuentoPct = publica ? ((publica - efectiva) / publica) * 100 : 0;
+  return { efectiva, publica, descuentoPct, caras, monto };
+}
+
 export async function getEmbudo(f: FiltrosReporte): Promise<Embudo> {
   const [sol, prop, camp] = await Promise.all([
     conteoStatus('solicitud', f),

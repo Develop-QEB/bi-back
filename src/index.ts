@@ -6,7 +6,7 @@ import { pool } from './db.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
-import { dimensionValida, getCampanias, getCatorcenas, getCiclo, getDistribucion, getEmbudo, getOpciones, getVentasPeriodo, getVentaTotal } from './services/reportes.service.js';
+import { dimensionValida, getCampanias, getCatorcenas, getCiclo, getDistribucion, getEmbudo, getOpciones, getTarifas, getVentasPeriodo, getVentaTotal } from './services/reportes.service.js';
 import type { FiltrosReporte } from './types.js';
 import {
   getObjetivos,
@@ -153,6 +153,10 @@ app.get('/reportes/opciones', wrap(async (req, res) => {
 
 app.get('/reportes/venta-total', wrap(async (req, res) => {
   res.json({ total: await getVentaTotal(parseFiltrosReporte(req)) });
+}));
+
+app.get('/reportes/tarifas', wrap(async (req, res) => {
+  res.json(await getTarifas(parseFiltrosReporte(req)));
 }));
 
 app.get('/reportes/catorcenas', wrap(async (req, res) => {
