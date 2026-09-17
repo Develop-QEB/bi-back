@@ -283,23 +283,39 @@ export async function getVentaTotal(f: FiltrosReporte): Promise<number> {
 }
 
 /**
- * Promedios de tarifa según el alcance filtrado (V_APS):
- *  - efectiva = SUM(Monto Total) / SUM(Caras)  (lo realmente cobrado por cara)
- *  - publica  = SUM(Tarifa × Caras) / SUM(Caras)  (tarifa de lista promedio ponderada)
+ * Promedios de tarifa desde el PIPELINE (solicitudCaras) para tener el descuento
+ * REAL: tiene tanto `tarifa_publica` (precio de lista) como `costo` (lo cobrado).
+ *  - publica  = SUM(tarifa_publica × caras) / SUM(caras)   (precio de lista prom.)
+ *  - efectiva = SUM(costo) / SUM(caras)                    (lo cobrado por cara)
  *  - descuentoPct = (publica − efectiva) / publica
+ * Filtros: año/mes/cliente/asesor sobre solicitud; plaza/formato/mueble sobre sc.
  */
 export async function getTarifas(f: FiltrosReporte): Promise<{ efectiva: number; publica: number; descuentoPct: number; caras: number; monto: number }> {
-  const { where, params } = await vapsWhere(f);
-  const [r] = await query<{ mt: string | null; caras: string | null; tc: string | null }>(
-    `SELECT SUM(\`Monto Total\`) mt, SUM(\`Caras\`) caras, SUM(\`Tarifa\` * \`Caras\`) tc
-       FROM V_APS_Globales WHERE ${where}`,
-    params
+  const cond: string[] = ['YEAR(s.fecha) = :anio', 'sc.caras > 0'];
+  const p: Record<string, unknown> = { anio: f.anio };
+  if (f.mes) { cond.push('MONTH(s.fecha) = :mes'); p.mes = f.mes; }
+  if (f.cliente) { cond.push('s.razon_social = :cliente'); p.cliente = f.cliente; }
+  if (f.asesor) {
+    const vars = await variantesAsesor(f.asesor, "SELECT DISTINCT asesor a FROM solicitud WHERE asesor IS NOT NULL AND asesor <> ''");
+    if (!vars.length) cond.push('1=0');
+    else { const keys = vars.map((_, i) => `:ta${i}`); vars.forEach((v, i) => { p[`ta${i}`] = v; }); cond.push(`s.asesor IN (${keys.join(',')})`); }
+  }
+  if (f.plaza) { cond.push('sc.estados LIKE :plaza'); p.plaza = `%${f.plaza}%`; }
+  if (f.formato) { cond.push('sc.tipo LIKE :formato'); p.formato = `%${f.formato}%`; }
+  if (f.mueble) { cond.push('sc.formato LIKE :mueble'); p.mueble = `%${f.mueble}%`; }
+  const [r] = await query<{ costo: string | null; caras: string | null; tpub: string | null }>(
+    `SELECT SUM(sc.costo) costo, SUM(sc.caras) caras, SUM(sc.tarifa_publica * sc.caras) tpub
+       FROM solicitud s
+       JOIN propuesta p2 ON p2.solicitud_id = s.id
+       JOIN solicitudCaras sc ON sc.idquote = p2.id
+      WHERE ${cond.join(' AND ')}`,
+    p
   );
-  const monto = Number(r?.mt) || 0;
+  const monto = Number(r?.costo) || 0;
   const caras = Number(r?.caras) || 0;
-  const tc = Number(r?.tc) || 0;
+  const tpub = Number(r?.tpub) || 0;
   const efectiva = caras ? monto / caras : 0;
-  const publica = caras ? tc / caras : 0;
+  const publica = caras ? tpub / caras : 0;
   const descuentoPct = publica ? ((publica - efectiva) / publica) * 100 : 0;
   return { efectiva, publica, descuentoPct, caras, monto };
 }

@@ -437,15 +437,15 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
 
   // Cliente / asesor (normalizado) de la propuesta (idquote = propuesta.id).
   const quoteIds = [...new Set(eventos.map((e) => quoteDe(e.refId)).filter((n): n is number => n != null))];
-  const propMap = new Map<number, { cliente: string | null; asesor: string | null; marca: string | null }>();
+  const propMap = new Map<number, { cliente: string | null; asesor: string | null; marca: string | null; status: string | null }>();
   if (quoteIds.length) {
-    const propRows = await query<{ q: number; cliente: string | null; asesor: string | null; marca: string | null }>(
-      `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor, s.marca_nombre AS marca
+    const propRows = await query<{ q: number; cliente: string | null; asesor: string | null; marca: string | null; status: string | null }>(
+      `SELECT p.id AS q, s.razon_social AS cliente, s.asesor AS asesor, s.marca_nombre AS marca, p.status AS status
          FROM propuesta p
          LEFT JOIN solicitud s ON s.id = p.solicitud_id
         WHERE p.id IN (${quoteIds.join(',')})`
     );
-    for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: normalizaAsesor(r.asesor), marca: r.marca ?? null });
+    for (const r of propRows) propMap.set(Number(r.q), { cliente: r.cliente ?? null, asesor: normalizaAsesor(r.asesor), marca: r.marca ?? null, status: r.status ?? null });
   }
 
   // Atributos EXACTOS por cara editada (solicitudCaras.id = caraId).
@@ -469,7 +469,7 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
   for (const e of eventos) {
     const q = quoteDe(e.refId);
     const p = q != null ? propMap.get(q) : undefined;
-    if (p) { e.cliente = p.cliente; e.asesor = p.asesor; e.marca = p.marca; }
+    if (p) { e.cliente = p.cliente; e.asesor = p.asesor; e.marca = p.marca; e.status = p.status; }
     // Unión de atributos sobre las caras realmente editadas.
     const plazas = new Set<string>(), formatos = new Set<string>(), muebles = new Set<string>();
     for (const id of e.caraIds ?? []) {
