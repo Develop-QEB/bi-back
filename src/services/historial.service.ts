@@ -32,6 +32,9 @@ function categorizar(tipo: string, accion: string): CategoriaAccion {
   const a = (accion || '').toLowerCase();
   if (t.includes('rechazo') || a.includes('rechazo')) return 'rechazo';
   if (t.startsWith('autorizacion') || a.startsWith('aprobación') || a.startsWith('aprobacion')) return 'autorizacion';
+  // APS = marca de posteo (asignar/remover el # APS). NO es eliminación de reservas
+  // ni suma/resta caras: es operativo. Va antes del check de eliminación/remoción.
+  if (a.includes('aps')) return a.includes('post') ? 'post_sap' : 'asignacion';
   if (a.includes('eliminaci') || a.includes('remoci')) return 'eliminacion';
   if (a === 'cambio de estado') return 'cambio_estado';
   if (a.includes('asignaci')) return 'asignacion';
@@ -76,6 +79,7 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let caraIds: number[] | undefined;
   let cambioPeriodo = false;
   let hayTarifaEdit = false;
+  let tieneCarasElim = false;
 
   let json: any = null;
   const raw = row.detalles ?? '';
@@ -91,6 +95,24 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     if (typeof json.reservas_eliminadas === 'number') caras = -Math.abs(json.reservas_eliminadas);
     if (typeof json.carasAprobadas === 'number')
       caras = categoria === 'rechazo' ? -Math.abs(json.carasAprobadas) : Math.abs(json.carasAprobadas);
+
+    // Eliminación de circuito COMPLETO desde el modal de propuesta: el detalle trae
+    // `caras_eliminadas[]` (con caras y costo por circuito) en vez de `reservas_eliminadas`.
+    // Sumamos caras (negativo) y costo (negativo) para que SÍ pese en Variaciones/inversión.
+    if (Array.isArray(json.caras_eliminadas) && json.caras_eliminadas.length) {
+      tieneCarasElim = true;
+      let cE = 0, mE = 0;
+      const ids: number[] = [];
+      for (const c of json.caras_eliminadas) {
+        cE += num(c?.caras);
+        mE += num(c?.costo);
+        const id = Number(c?.id);
+        if (Number.isFinite(id) && id > 0) ids.push(id);
+      }
+      if (cE > 0) caras = -Math.abs(cE);
+      if (mE > 0) monto = -Math.abs(mE);
+      if (ids.length) caraIds = [...new Set([...(caraIds ?? []), ...ids])];
+    }
 
     if (Array.isArray(json.cambios)) {
       const campoDe = (c: any) => String(c?.campo ?? c?.label ?? '');
@@ -137,9 +159,17 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   }
 
   // Tipo de edición legible (para la columna "Tipo" del historial). Prioridad:
-  // eliminación > cambio de periodo > caras > tarifa > estado/otro.
+  // APS (operativo) > eliminación de circuito completo > baja de reservas > periodo >
+  // caras > tarifa > estado/otro.
+  const accLC = (row.accion || '').toLowerCase();
+  // Remoción de APS: operativo (listo/no listo para postear), NO impacto.
+  const esRemocionAps = accLC.includes('aps') && (accLC.includes('remoci') || accLC.includes('remov'));
+  // Circuito COMPLETO eliminado: trae caras_eliminadas[] o la acción dice "circuito".
+  const esElimCircuito = tieneCarasElim || accLC.includes('circuito');
   let tipoEdicion: string;
-  if (categoria === 'eliminacion') tipoEdicion = 'Eliminar circuito';
+  if (esRemocionAps) tipoEdicion = 'Remoción de APS';
+  else if (categoria === 'eliminacion' && esElimCircuito) tipoEdicion = 'Eliminar circuito';
+  else if (categoria === 'eliminacion') tipoEdicion = 'Baja de reservas';
   else if (categoria === 'rechazo') tipoEdicion = 'Rechazo';
   else if (cambioPeriodo) tipoEdicion = 'Cambio de periodo';
   else if (carasAntes != null && caras > 0) tipoEdicion = 'Alza de caras';
@@ -504,8 +534,12 @@ export async function getImpacto(
   const rows = await query<RowEvento>(
     `${SELECT_EVENTO}
       WHERE h.fecha_hora >= :desde AND h.fecha_hora < :hasta
-        AND JSON_VALID(h.detalles) AND h.detalles LIKE '%"cambios"%'
-        AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%onto%' OR h.detalles LIKE '%otal%')
+        AND JSON_VALID(h.detalles)
+        AND (
+          (h.detalles LIKE '%"cambios"%'
+            AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%onto%' OR h.detalles LIKE '%otal%'))
+          OR h.detalles LIKE '%caras_eliminadas%'
+        )
       ORDER BY h.id DESC
       LIMIT 5000`,
     { desde, hasta }
