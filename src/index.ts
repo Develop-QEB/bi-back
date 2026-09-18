@@ -166,17 +166,29 @@ app.post('/usuarios/:id/password', requireAuth, requireAdmin, wrap(async (req, r
 }));
 
 // TEMPORAL: siembra inicial de usuarios QEBI desde los usuarios reales de QEB.
+// Lista blanca de correos exactos (curada) para no arrastrar falsos positivos.
+const SEED_CORREOS_QEBI = [
+  'mario.salcido@deepia.dev', // admin
+  'contacto@qeb.mx',          // Jos (admin)
+  'mblancas@imu.com.mx',      // Miguel Ángel Blancas — Especialista BI (mike)
+  'cenvila@imu.com.mx',       // María Cristina Díaz — Especialista BI
+  'agonzalez@imu.com.mx',     // Ángel Antonio González
+  'rlunal@imu.com.mx',        // Rodrigo Luna López
+  'rmargain@imu.com.mx',      // Rodrigo Margain
+  'gcandano@imu.com.mx',      // Gerardo Candano — Director General
+  'jmlopez@imu.com.mx',       // Juan Manuel López Rodríguez (Gerente)
+  'dbaltierra@imu.com.mx',    // Dulce Rocío Baltierra
+];
+const SEED_ADMINS_QEBI = ['mario.salcido@deepia.dev', 'contacto@qeb.mx'];
 app.post('/usuarios/_seed', wrap(async (req, res) => {
   if (req.query.k !== 'seed_qebi_9f3c2x') { res.status(404).end(); return; }
-  const nombres = ['dulce', 'mike', 'miguel', 'juan manuel', 'angel romo', 'rodrigo margain', 'angel antonio', 'rodrigo luna', 'gerardo', 'mario', 'jos'];
-  const adminCorreos = Array.isArray(req.body?.adminCorreos) ? req.body.adminCorreos.map(String) : [];
+  const extra = Array.isArray(req.body?.correosExactos) ? req.body.correosExactos.map(String) : [];
+  const adminCorreos = [...SEED_ADMINS_QEBI, ...(Array.isArray(req.body?.adminCorreos) ? req.body.adminCorreos.map(String) : [])];
   const sembrados = await sembrarDesdeProd({
-    nombresLike: nombres,
-    incluirAreaBI: true,
+    correosExactos: [...SEED_CORREOS_QEBI, ...extra],
     passwordInicial: 'admin123',
     permisos: { bi: true, variaciones: true, embudo: true, objetivos: false },
     adminCorreos,
-    adminNombres: ['mario', 'jos'],
   });
   res.json({ total: sembrados.length, sembrados });
 }));

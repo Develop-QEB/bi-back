@@ -123,22 +123,30 @@ export async function verificarPasswordActual(id: number, actual: string): Promi
  * Admin. Password inicial = `passwordInicial` (bcrypt). Devuelve a quién sembró.
  */
 export async function sembrarDesdeProd(opts: {
-  nombresLike: string[];
-  incluirAreaBI: boolean;
+  correosExactos?: string[];
+  nombresLike?: string[];
+  incluirAreaBI?: boolean;
   passwordInicial: string;
   permisos: Permisos;
   adminCorreos: string[];
   adminNombres?: string[];
 }): Promise<{ correo: string; nombre: string; admin: boolean }[]> {
   await ensureTabla();
-  const like = opts.nombresLike
+  const params: Record<string, unknown> = {};
+  const cond: string[] = [];
+
+  // Modo preferido: lista blanca de correos exactos (determinista, sin falsos positivos).
+  const correos = (opts.correosExactos ?? []).map((c) => c.trim().toLowerCase()).filter(Boolean);
+  if (correos.length) {
+    correos.forEach((c, i) => { cond.push(`LOWER(correo_electronico) = :c${i}`); params[`c${i}`] = c; });
+  }
+  // Modo fuzzy opcional (por nombre / área BI).
+  const like = (opts.nombresLike ?? [])
     .map((n) => n.replace(/[^a-zA-ZÀ-ÿñÑ ]/g, '').trim())
     .filter(Boolean);
-  const cond: string[] = [];
-  like.forEach((_, i) => cond.push(`LOWER(nombre) LIKE :n${i}`));
+  like.forEach((n, i) => { cond.push(`LOWER(nombre) LIKE :n${i}`); params[`n${i}`] = `%${n.toLowerCase()}%`; });
   if (opts.incluirAreaBI) cond.push(`(area LIKE '%BI%' OR puesto LIKE '%BI%')`);
-  const params: Record<string, unknown> = {};
-  like.forEach((n, i) => { params[`n${i}`] = `%${n.toLowerCase()}%`; });
+  if (!cond.length) return [];
 
   const prod = await query<{ nombre: string; correo_electronico: string; area: string | null }>(
     `SELECT nombre, correo_electronico, area FROM usuario
