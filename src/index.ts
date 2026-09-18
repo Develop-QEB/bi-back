@@ -3,7 +3,8 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import { env } from './env.js';
 import { pool } from './db.js';
-import { login as authLogin, verificarToken } from './auth.js';
+import { login as authLogin, verificarToken, type Payload } from './auth.js';
+import { listar as listarUsuarios, crear as crearUsuario, actualizar as actualizarUsuario, setPassword as setPasswordUsuario, verificarPasswordActual, sembrarDesdeProd } from './services/usuarios.service.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
@@ -116,9 +117,69 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+const getUser = (req: Request): Payload => (req as Request & { user: Payload }).user;
+
 app.get('/auth/me', requireAuth, (req, res) => {
-  res.json({ user: (req as Request & { user?: unknown }).user });
+  res.json({ user: getUser(req) });
 });
+
+// Cambiar la PROPIA contraseña.
+app.post('/auth/cambiar-password', requireAuth, wrap(async (req, res) => {
+  const { actual, nueva } = req.body ?? {};
+  if (!nueva || String(nueva).length < 6) { res.status(400).json({ error: 'La nueva contraseña debe tener al menos 6 caracteres' }); return; }
+  const u = getUser(req);
+  const ok = await verificarPasswordActual(u.userId, String(actual ?? ''));
+  if (!ok) { res.status(400).json({ error: 'La contraseña actual es incorrecta' }); return; }
+  await setPasswordUsuario(u.userId, String(nueva));
+  res.json({ ok: true });
+}));
+
+/** Solo Admin. */
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!getUser(req)?.esAdmin) { res.status(403).json({ error: 'Solo administradores' }); return; }
+  next();
+}
+
+// --- Gestor de usuarios (solo Admin) ---
+app.get('/usuarios', requireAuth, requireAdmin, wrap(async (_req, res) => {
+  res.json(await listarUsuarios());
+}));
+app.post('/usuarios', requireAuth, requireAdmin, wrap(async (req, res) => {
+  const { nombre, correo, password, esAdmin, permisos } = req.body ?? {};
+  if (!nombre || !correo || !password || String(password).length < 6) { res.status(400).json({ error: 'Nombre, correo y contraseña (mín. 6) requeridos' }); return; }
+  await crearUsuario({ nombre: String(nombre), correo: String(correo).trim(), password: String(password), esAdmin: !!esAdmin, permisos });
+  res.json({ ok: true });
+}));
+app.put('/usuarios/:id', requireAuth, requireAdmin, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'id inválido' }); return; }
+  const { nombre, esAdmin, activo, permisos } = req.body ?? {};
+  await actualizarUsuario(id, { nombre, esAdmin, activo, permisos });
+  res.json({ ok: true });
+}));
+app.post('/usuarios/:id/password', requireAuth, requireAdmin, wrap(async (req, res) => {
+  const id = Number(req.params.id);
+  const { password } = req.body ?? {};
+  if (!Number.isInteger(id) || !password || String(password).length < 6) { res.status(400).json({ error: 'id/contraseña inválidos (mín. 6)' }); return; }
+  await setPasswordUsuario(id, String(password));
+  res.json({ ok: true });
+}));
+
+// TEMPORAL: siembra inicial de usuarios QEBI desde los usuarios reales de QEB.
+app.post('/usuarios/_seed', wrap(async (req, res) => {
+  if (req.query.k !== 'seed_qebi_9f3c2x') { res.status(404).end(); return; }
+  const nombres = ['dulce', 'mike', 'miguel', 'juan manuel', 'angel romo', 'rodrigo margain', 'angel antonio', 'rodrigo luna', 'gerardo', 'mario', 'jos'];
+  const adminCorreos = Array.isArray(req.body?.adminCorreos) ? req.body.adminCorreos.map(String) : [];
+  const sembrados = await sembrarDesdeProd({
+    nombresLike: nombres,
+    incluirAreaBI: true,
+    passwordInicial: 'admin123',
+    permisos: { bi: true, variaciones: true, embudo: true, objetivos: false },
+    adminCorreos,
+    adminNombres: ['mario', 'jos'],
+  });
+  res.json({ total: sembrados.length, sembrados });
+}));
 
 // Todo lo de datos exige sesión (login seguro). /health, / y /auth/login son públicos.
 app.use(['/resumen-ventas', '/asesores', '/clientes', '/anios', '/historial', '/reportes', '/objetivos', '/presupuesto'], requireAuth);
