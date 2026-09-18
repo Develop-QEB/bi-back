@@ -38,4 +38,6 @@ export const env = {
   },
   /** 'TOTAL' = todos los Monto Total; 'VENTA' = solo U_dscTAsig='Venta'. */
   ventaDef: (process.env.VENTA_DEF ?? 'TOTAL').toUpperCase() as 'TOTAL' | 'VENTA',
+  /** Secreto para firmar/verificar los JWT del login del BI. */
+  jwtSecret: process.env.JWT_SECRET ?? 'qebi-dev-secret-cambiar-en-prod',
 } as const;

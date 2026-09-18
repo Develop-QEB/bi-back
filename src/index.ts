@@ -3,6 +3,7 @@ import express, { type Request, type Response, type NextFunction } from 'express
 import cors from 'cors';
 import { env } from './env.js';
 import { pool } from './db.js';
+import { login as authLogin, verificarToken } from './auth.js';
 import { getAnios, getAsesores, getClientes, getResumenVentas } from './services/resumenVentas.service.js';
 import { getPresupuesto, upsertPresupuesto } from './services/presupuesto.service.js';
 import { getContexto, getEventos, getImpacto, getResumen } from './services/historial.service.js';
@@ -90,6 +91,37 @@ app.get('/health', wrap(async (_req, res) => {
   await pool.query('SELECT 1');
   res.json({ ok: true, ts: new Date().toISOString() });
 }));
+
+// --- Auth (login con los usuarios de QEB) ---
+app.post('/auth/login', wrap(async (req, res) => {
+  const { correo, email, password } = req.body ?? {};
+  try {
+    const r = await authLogin(String(correo ?? email ?? ''), String(password ?? ''));
+    res.json(r);
+  } catch {
+    res.status(401).json({ error: 'Credenciales inválidas' });
+  }
+}));
+
+/** Middleware: exige un JWT válido (Authorization: Bearer …). */
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  const h = req.headers.authorization ?? '';
+  const token = h.startsWith('Bearer ') ? h.slice(7) : '';
+  if (!token) { res.status(401).json({ error: 'No autenticado' }); return; }
+  try {
+    (req as Request & { user?: unknown }).user = verificarToken(token);
+    next();
+  } catch {
+    res.status(401).json({ error: 'Sesión expirada o inválida' });
+  }
+}
+
+app.get('/auth/me', requireAuth, (req, res) => {
+  res.json({ user: (req as Request & { user?: unknown }).user });
+});
+
+// Todo lo de datos exige sesión (login seguro). /health, / y /auth/login son públicos.
+app.use(['/resumen-ventas', '/asesores', '/clientes', '/anios', '/historial', '/reportes', '/objetivos', '/presupuesto'], requireAuth);
 
 app.get('/resumen-ventas', wrap(async (req, res) => {
   res.json(await getResumenVentas(parseFiltros(req)));

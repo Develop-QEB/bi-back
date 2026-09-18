@@ -45,3 +45,5 @@ services:
         sync: false
       - key: WDB_NAME
         value: u658050396_QEBI
+      - key: JWT_SECRET
+        sync: false
