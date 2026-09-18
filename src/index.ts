@@ -177,9 +177,13 @@ const SEED_CORREOS_QEBI = [
   'rmargain@imu.com.mx',      // Rodrigo Margain
   'gcandano@imu.com.mx',      // Gerardo Candano — Director General
   'jmlopez@imu.com.mx',       // Juan Manuel López Rodríguez (Gerente)
-  'dbaltierra@imu.com.mx',    // Dulce Rocío Baltierra
+  'dcarbajal@imu.com.mx',     // Dulce Angélica Carbajal
 ];
 const SEED_ADMINS_QEBI = ['mario.salcido@deepia.dev', 'contacto@qeb.mx'];
+// Usuarios que NO están en la tabla de producción de QEB: se dan de alta a mano.
+const SEED_MANUALES_QEBI: { nombre: string; correo: string }[] = [
+  { nombre: 'Ángel Romo', correo: 'aromo@imu.com.mx' },
+];
 app.post('/usuarios/_seed', wrap(async (req, res) => {
   if (req.query.k !== 'seed_qebi_9f3c2x') { res.status(404).end(); return; }
   const extra = Array.isArray(req.body?.correosExactos) ? req.body.correosExactos.map(String) : [];
@@ -190,7 +194,16 @@ app.post('/usuarios/_seed', wrap(async (req, res) => {
     permisos: { bi: true, variaciones: true, embudo: true, objetivos: false },
     adminCorreos,
   });
-  res.json({ total: sembrados.length, sembrados });
+  // Altas manuales (no están en prod): idempotentes, no pisan contraseña.
+  const manuales: { correo: string; nombre: string }[] = [];
+  for (const m of SEED_MANUALES_QEBI) {
+    await crearUsuario({
+      nombre: m.nombre, correo: m.correo, password: 'admin123',
+      esAdmin: false, permisos: { bi: true, variaciones: true, embudo: true, objetivos: false },
+    });
+    manuales.push({ correo: m.correo, nombre: m.nombre });
+  }
+  res.json({ total: sembrados.length + manuales.length, sembrados, manuales });
 }));
 
 // Todo lo de datos exige sesión (login seguro). /health, / y /auth/login son públicos.
