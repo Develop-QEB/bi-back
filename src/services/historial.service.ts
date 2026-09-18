@@ -134,7 +134,9 @@ export function parseEvento(row: RowEvento): EventoHistorial {
           // Solo "costo/Inversión" (importe total de la cara). tarifa_publica es
           // precio unitario — no se suma para no inflar la inversión.
           iA += num(c.antes); iD += num(c.despues); hayInv = true;
-        } else if (/periodo|catorcena/.test(campo) || /periodo|catorcena/.test(label)) {
+        } else if (/per[ií]odo|catorcena/.test(campo) || /per[ií]odo|catorcena/.test(label)) {
+          // OJO: el back de QEB escribe el campo como "Período" (con acento í), así que
+          // el patrón debe aceptar i/í o no detecta los cambios de periodo.
           cambioPeriodo = true;
         } else if (/tarifa/.test(campo) || /tarifa/.test(label)) {
           hayTarifa = true;
@@ -537,14 +539,20 @@ export async function getImpacto(
         AND JSON_VALID(h.detalles)
         AND (
           (h.detalles LIKE '%"cambios"%'
-            AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%onto%' OR h.detalles LIKE '%otal%'))
+            AND (h.detalles LIKE '%arifa%' OR h.detalles LIKE '%nversi%' OR h.detalles LIKE '%onto%' OR h.detalles LIKE '%otal%'
+                 OR h.detalles LIKE '%"campo":"Per%odo"%' OR h.detalles LIKE '%"campo":"catorcena"%'))
           OR h.detalles LIKE '%caras_eliminadas%'
+          OR h.accion LIKE '%liminaci%circuito%'
         )
       ORDER BY h.id DESC
-      LIMIT 5000`,
+      LIMIT 6000`,
     { desde, hasta }
   );
-  const eventos = rows.map(parseEvento).filter((e) => e.monto != null && e.monto !== 0);
+  // Mantenemos: ediciones con $ + eliminaciones de circuito completo + cambios de
+  // periodo (estos dos pueden no mover $ pero se quieren ver en el historial/filtro rápido).
+  const eventos = rows
+    .map(parseEvento)
+    .filter((e) => (e.monto != null && e.monto !== 0) || e.tipoEdicion === 'Eliminar circuito' || e.tipoEdicion === 'Cambio de periodo');
   await enriquecerCampanias(eventos);
 
   const total = eventos.reduce((a, e) => a + (e.monto ?? 0), 0);
@@ -554,7 +562,7 @@ export async function getImpacto(
 
   // Devolvemos y enriquecemos hasta 1000 ediciones (para que los filtros del año
   // tengan todo el universo). El enriquecido corre 2 queries batch (~1–2s).
-  const ediciones = eventos.slice(0, 1000);
+  const ediciones = eventos.slice(0, 2000);
   await enriquecerAtributos(ediciones);
 
   return {
