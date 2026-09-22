@@ -22,11 +22,34 @@ function baseSql(base: FiltrosResumen['base']): string | null {
 }
 
 /** Construye el WHERE común (año + filtros). Devuelve fragmento SQL y params. */
+const CO = 'COLLATE utf8mb4_unicode_ci'; // las columnas de V_APS son utf8mb4_bin → forzar colación al comparar/IN/LIKE.
+
 function where(anio: number, f: FiltrosResumen, opts: { conMes?: boolean } = {}) {
   const cond: string[] = ['`Año` = :anio'];
   const params: Record<string, unknown> = { anio };
-  const b = baseSql(f.base);
-  if (b) { cond.push('UPPER(`BASE`) = :base'); params.base = b; }
+  // BASE: multi (CIMU/Trade/UDC) si viene `bases`; si no, el single `base`.
+  if (f.bases?.length) {
+    cond.push(`UPPER(\`BASE\`) IN (${f.bases.map((_, i) => `:base${i}`).join(',')})`);
+    f.bases.forEach((x, i) => { params[`base${i}`] = x.toUpperCase(); });
+  } else {
+    const b = baseSql(f.base);
+    if (b) { cond.push('UPPER(`BASE`) = :base'); params.base = b; }
+  }
+  // Tipo de artículo (RT/BF/IN/IM/CT).
+  if (f.tipos?.length) {
+    cond.push(`\`Tipo\` ${CO} IN (${f.tipos.map((_, i) => `:tipo${i}`).join(',')})`);
+    f.tipos.forEach((x, i) => { params[`tipo${i}`] = x.toUpperCase(); });
+  }
+  // Tradicional / Digital (columna `Tipo Digital`).
+  if (f.digital?.length) {
+    cond.push(`\`Tipo Digital\` ${CO} IN (${f.digital.map((_, i) => `:dig${i}`).join(',')})`);
+    f.digital.forEach((x, i) => { params[`dig${i}`] = x; });
+  }
+  // Mueble/formato por palabra clave sobre Dscription (PARABUS/COLUMNA/MACRO…).
+  if (f.muebles?.length) {
+    cond.push(`(${f.muebles.map((_, i) => `\`Dscription\` ${CO} LIKE :mue${i}`).join(' OR ')})`);
+    f.muebles.forEach((x, i) => { params[`mue${i}`] = `%${x}%`; });
+  }
   if (f.asesor) { cond.push('`U_Asesor` = :asesor'); params.asesor = f.asesor; }
   // "Cliente" en el negocio = MARCA (APPLE, AEROMEXICO, SEARS…), no la razón social.
   if (f.cliente) { cond.push('`U_Marca` = :cliente'); params.cliente = f.cliente; }

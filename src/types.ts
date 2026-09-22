@@ -2,10 +2,18 @@
  * Contrato de datos del BI. DEBE coincidir con bi-front/src/types/bi.ts.
  * Si cambias algo aquí, refléjalo en el front (o viceversa).
  */
-export type BaseDatos = 'CIMU' | 'Trade' | 'SAP';
+export type BaseDatos = 'CIMU' | 'Trade' | 'UDC';
 
 export interface FiltrosResumen {
   base: BaseDatos | null;
+  /** Bases seleccionadas (multi). Vacío/undefined = todas. Sustituye a `base`. */
+  bases?: string[];
+  /** Tipo de artículo (columna `Tipo`): RT/BF/IN/IM/CT. Vacío = todos. */
+  tipos?: string[];
+  /** Palabras clave de mueble/formato sobre `Dscription` (PARABUS/COLUMNA/MACRO…). Vacío = todos. */
+  muebles?: string[];
+  /** `Tipo Digital`: Tradicional/Digital/Bonificacion. Vacío = todos. */
+  digital?: string[];
   /** Nombre del asesor comercial (columna `U_Asesor`); null = todos */
   asesor: string | null;
   /** Nombre del cliente (columna `U_Cliente`); null = todos */

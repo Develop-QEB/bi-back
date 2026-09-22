@@ -39,17 +39,29 @@ app.use(
 );
 app.use(express.json());
 
-const BASES = new Set<BaseDatos>(['CIMU', 'Trade', 'SAP']);
+const BASES = new Set<BaseDatos>(['CIMU', 'Trade', 'UDC']);
 function parseBase(v: unknown): BaseDatos | null {
   if (typeof v !== 'string' || v === '' || v.toLowerCase() === 'todas') return null;
   const hit = [...BASES].find((b) => b.toLowerCase() === v.toLowerCase());
   return hit ?? null;
 }
+/** Lee un query param multi-valor: "a,b,c" (o repetido) → ['a','b','c']. Vacío = undefined. */
+function parseLista(v: unknown): string[] | undefined {
+  const arr = (Array.isArray(v) ? v : typeof v === 'string' ? v.split(',') : [])
+    .map((s) => String(s).trim())
+    .filter(Boolean);
+  return arr.length ? arr : undefined;
+}
 function parseFiltros(req: Request): FiltrosResumen {
   const q = req.query;
   const anio = Number(q.anio);
+  const bases = parseLista(q.bases);
   return {
-    base: parseBase(q.base),
+    base: parseBase(q.base) ?? (bases && bases.length === 1 ? parseBase(bases[0]) : null),
+    bases,
+    tipos: parseLista(q.tipos),
+    muebles: parseLista(q.muebles),
+    digital: parseLista(q.digital),
     asesor: typeof q.asesor === 'string' && q.asesor && q.asesor.toLowerCase() !== 'todos' ? q.asesor : null,
     cliente: typeof q.cliente === 'string' && q.cliente && q.cliente.toLowerCase() !== 'todos' ? q.cliente : null,
     anio: Number.isInteger(anio) ? anio : new Date().getFullYear(),
