@@ -112,6 +112,13 @@ export interface EventoHistorial {
   tipoEdicion?: string;
   // ids de las caras editadas (solicitudCaras.id) — permiten atribución exacta.
   caraIds?: number[];
+  // Códigos de circuito tocados (p.ej. RT-P1-COB-MX, IM-...). Del detalle.
+  articulos?: string[];
+  // Unidad de la cantidad: 'impresiones' si el/los artículo(s) son de impresión (IM-), si no 'caras'.
+  unidad?: 'caras' | 'impresiones';
+  // Formato/mueble (PARABUS/COLUMNA…) y periodo del circuito, tomados del detalle (para eliminación).
+  formatoDetalle?: string | null;
+  periodoDetalle?: string | null;
   // Atributos EXACTOS de las caras editadas (solo en /reportes/impacto, filtros del jefe).
   cliente?: string | null;
   asesor?: string | null;

@@ -80,6 +80,8 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let cambioPeriodo = false;
   let hayTarifaEdit = false;
   let tieneCarasElim = false;
+  const articuloSet = new Set<string>();
+  let formatoDetalle: string | null = null;
 
   let json: any = null;
   const raw = row.detalles ?? '';
@@ -108,10 +110,20 @@ export function parseEvento(row: RowEvento): EventoHistorial {
         mE += num(c?.costo);
         const id = Number(c?.id);
         if (Number.isFinite(id) && id > 0) ids.push(id);
+        if (c?.articulo) articuloSet.add(String(c.articulo).trim());
+        if (c?.formato && !formatoDetalle) formatoDetalle = String(c.formato).trim();
       }
       if (cE > 0) caras = -Math.abs(cE);
       if (mE > 0) monto = -Math.abs(mE);
       if (ids.length) caraIds = [...new Set([...(caraIds ?? []), ...ids])];
+    }
+
+    // Circuitos (eliminación de reservas / de circuito desde campaña): trae articulo + formato.
+    if (Array.isArray(json.circuitos)) {
+      for (const c of json.circuitos) {
+        if (c?.articulo) articuloSet.add(String(c.articulo).trim());
+        if (c?.formato && !formatoDetalle) formatoDetalle = String(c.formato).trim();
+      }
     }
 
     if (Array.isArray(json.cambios)) {
@@ -121,6 +133,7 @@ export function parseEvento(row: RowEvento): EventoHistorial {
       if (ids.length) caraIds = ids;
       const est = json.cambios.find((c: any) => /estado/i.test(campoDe(c)));
       if (est) { estadoAntes = est.antes ?? null; estadoDespues = est.despues ?? null; }
+      for (const c of json.cambios) if (c?.articulo) articuloSet.add(String(c.articulo).trim());
 
       // Una edición toca MUCHAS caras (una fila por cara y por campo). Agregamos
       // antes/después de todas para el ANTES→DESPUÉS real y el delta correcto.
@@ -183,6 +196,12 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   else if (categoria === 'post_sap') tipoEdicion = 'POST a SAP';
   else tipoEdicion = 'Otro';
 
+  // Unidad: 'impresiones' si TODOS los artículos tocados son de impresión (prefijo IM-);
+  // si no, 'caras'. (El resto de circuitos se miden en caras.)
+  const articulos = [...articuloSet];
+  const esImpresion = articulos.length > 0 && articulos.every((a) => a.toUpperCase().startsWith('IM-') || a.toUpperCase() === 'IM');
+  const unidad: 'caras' | 'impresiones' = esImpresion ? 'impresiones' : 'caras';
+
   return {
     id: Number(row.id),
     fecha: toISO(row.fecha_hora),
@@ -202,6 +221,9 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     invDespues,
     descripcion: descripcion || `${row.tipo} · ${row.accion}`,
     caraIds,
+    articulos: articulos.length ? articulos : undefined,
+    unidad,
+    formatoDetalle,
     tipoEdicion,
   };
 }
