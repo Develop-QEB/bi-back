@@ -127,6 +127,12 @@ export interface EventoHistorial {
   // Formato/mueble (PARABUS/COLUMNA…) y periodo del circuito, tomados del detalle (para eliminación).
   formatoDetalle?: string | null;
   periodoDetalle?: string | null;
+  // Tarifa PÚBLICA (precio unitario) antes/después — distinta del costo/inversión.
+  tarifaAntes?: number | null;
+  tarifaDespues?: number | null;
+  // Flags de qué cambió realmente (para los chips y el filtro "Movimiento").
+  cambioCaras?: boolean;
+  cambioTarifa?: boolean;
   // Atributos EXACTOS de las caras editadas (solo en /reportes/impacto, filtros del jefe).
   cliente?: string | null;
   asesor?: string | null;

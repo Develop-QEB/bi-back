@@ -82,6 +82,10 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let tieneCarasElim = false;
   const articuloSet = new Set<string>();
   let formatoDetalle: string | null = null;
+  let tarifaAntes: number | null = null;   // tarifa_publica (precio unitario), NO el costo total
+  let tarifaDespues: number | null = null;
+  let cambioCaras = false;                  // cambió el # de caras
+  let cambioTarifa = false;                 // cambió la tarifa pública (distinto de que cambie la inversión)
 
   let json: any = null;
   const raw = row.detalles ?? '';
@@ -137,35 +141,38 @@ export function parseEvento(row: RowEvento): EventoHistorial {
 
       // Una edición toca MUCHAS caras (una fila por cara y por campo). Agregamos
       // antes/después de todas para el ANTES→DESPUÉS real y el delta correcto.
-      let cA = 0, cD = 0, iA = 0, iD = 0, hayCaras = false, hayInv = false, hayTarifa = false;
+      // OJO: 3 campos DISTINTOS e independientes → NO mezclar:
+      //   • caras          = # de caras (unidad)
+      //   • costo/Inversión = importe TOTAL (esto genera la Δ Inversión / impacto)
+      //   • tarifa_publica  = precio unitario (la "tarifa" real; NO es la inversión)
+      let cA = 0, cD = 0, iA = 0, iD = 0, hayCaras = false, hayInv = false;
       for (const c of json.cambios) {
         const campo = String(c?.campo ?? '').toLowerCase();
         const label = String(c?.label ?? '').toLowerCase();
         if (campo === 'caras' || label === 'caras') {
           cA += num(c.antes); cD += num(c.despues); hayCaras = true;
         } else if (campo === 'costo' || /inversi[oó]n/.test(label)) {
-          // Solo "costo/Inversión" (importe total de la cara). tarifa_publica es
-          // precio unitario — no se suma para no inflar la inversión.
           iA += num(c.antes); iD += num(c.despues); hayInv = true;
         } else if (/per[ií]odo|catorcena/.test(campo) || /per[ií]odo|catorcena/.test(label)) {
           // OJO: el back de QEB escribe el campo como "Período" (con acento í), así que
           // el patrón debe aceptar i/í o no detecta los cambios de periodo.
           cambioPeriodo = true;
         } else if (/tarifa/.test(campo) || /tarifa/.test(label)) {
-          hayTarifa = true;
+          // Tarifa pública (precio unitario). Tomamos el primer par como representativo
+          // y marcamos cambioTarifa solo si de verdad cambió (antes ≠ después).
+          const ta = num(c.antes), td = num(c.despues);
+          if (tarifaAntes == null) { tarifaAntes = ta; tarifaDespues = td; }
+          if (ta !== td) cambioTarifa = true;
         }
       }
-      hayTarifaEdit = hayInv || hayTarifa;
-      if (hayCaras) { carasAntes = cA; carasDespues = cD; caras = cD - cA; }
+      if (hayCaras) { carasAntes = cA; carasDespues = cD; caras = cD - cA; cambioCaras = cA !== cD; }
       if (hayInv) {
         invAntes = iA; invDespues = iD;
         const d = iD - iA;
         if (d !== 0) monto = d;
-      } else {
-        // Fallback: primer cambio monetario suelto (comportamiento previo).
-        const money = json.cambios.find((c: any) => /tarifa|inversi|monto|importe|total/i.test(campoDe(c)));
-        if (money) { const d = num(money.despues) - num(money.antes); if (d !== 0) monto = d; }
       }
+      // "Edición de tarifa" = cambió la tarifa PÚBLICA (no cualquier cambio de inversión).
+      hayTarifaEdit = cambioTarifa;
     }
     descripcion = describir(json, row, categoria, caras, campania, estadoAntes, estadoDespues);
   } else {
@@ -224,6 +231,10 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     articulos: articulos.length ? articulos : undefined,
     unidad,
     formatoDetalle,
+    tarifaAntes,
+    tarifaDespues,
+    cambioCaras,
+    cambioTarifa,
     tipoEdicion,
   };
 }
