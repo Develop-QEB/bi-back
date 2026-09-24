@@ -133,6 +133,8 @@ export interface EventoHistorial {
   // Flags de qué cambió realmente (para los chips y el filtro "Movimiento").
   cambioCaras?: boolean;
   cambioTarifa?: boolean;
+  // Eliminación ejecutada vía autorización (queda atribuida al gerente que autorizó).
+  viaAutorizacion?: boolean;
   // Atributos EXACTOS de las caras editadas (solo en /reportes/impacto, filtros del jefe).
   cliente?: string | null;
   asesor?: string | null;

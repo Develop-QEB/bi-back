@@ -235,6 +235,7 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     tarifaDespues,
     cambioCaras,
     cambioTarifa,
+    viaAutorizacion: !!(json && typeof json === 'object' && json.via === 'autorización'),
     tipoEdicion,
   };
 }
@@ -585,6 +586,9 @@ export async function getImpacto(
   // periodo (estos dos pueden no mover $ pero se quieren ver en el historial/filtro rápido).
   const eventos = rows
     .map(parseEvento)
+    // Ocultar eliminaciones ejecutadas VÍA AUTORIZACIÓN: el detalle las atribuye al gerente
+    // que autorizó (no a quien la solicitó/hizo) y no traen $ → sólo generan ruido en el impacto.
+    .filter((e) => !(e.tipoEdicion === 'Eliminar circuito' && e.viaAutorizacion))
     .filter((e) => (e.monto != null && e.monto !== 0) || e.tipoEdicion === 'Eliminar circuito' || e.tipoEdicion === 'Cambio de periodo');
   await enriquecerCampanias(eventos);
 
