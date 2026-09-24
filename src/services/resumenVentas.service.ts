@@ -59,11 +59,15 @@ function where(anio: number, f: FiltrosResumen, opts: { conMes?: boolean } = {})
 }
 
 const MONTO = 'SUM(`Monto Total`)';
+// Mes de la catorcena por su PUNTO MEDIO (inicio + 7 días), no por su fecha de inicio.
+// La columna `Mes` usa la fecha de inicio → una catorcena que cruza meses (p.ej.
+// 29-sep→12-oct) cae en el mes equivocado. QEB la cuenta por donde caen más días.
+const MES_EXPR = 'COALESCE(MONTH(DATE_ADD(`Fecha Ini Periodo`, INTERVAL 7 DAY)), `Mes`)';
 
 async function ventasPorMes(anio: number, f: FiltrosResumen): Promise<Map<number, number>> {
   const w = where(anio, f);
   const rows = await query<{ mes: number; monto: string }>(
-    `SELECT \`Mes\` mes, ${MONTO} monto FROM V_APS_Globales WHERE ${w.sql} GROUP BY \`Mes\``,
+    `SELECT ${MES_EXPR} mes, ${MONTO} monto FROM V_APS_Globales WHERE ${w.sql} GROUP BY mes`,
     w.params
   );
   return new Map(rows.filter((r) => r.mes != null).map((r) => [Number(r.mes), Number(r.monto)]));
@@ -92,10 +96,10 @@ async function catorcenaMesMap(anio: number, f: FiltrosResumen): Promise<Map<num
   const w = where(anio, f);
   const rows = await query<{ catorcena: number; mes: number; n: number }>(
     `SELECT CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(\`Periodo\`,' ',-1),'-',1) AS UNSIGNED) catorcena,
-            \`Mes\` mes, COUNT(*) n
+            ${MES_EXPR} mes, COUNT(*) n
        FROM V_APS_Globales
       WHERE ${w.sql} AND \`Periodo\` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %' AND \`Mes\` IS NOT NULL
-      GROUP BY catorcena, \`Mes\``,
+      GROUP BY catorcena, mes`,
     w.params
   );
   const best = new Map<number, { mes: number; n: number }>();

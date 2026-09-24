@@ -227,7 +227,11 @@ export async function getVentasPeriodo(periodo: Periodo, f: FiltrosReporte): Pro
   const cond = [where];
   let expr: string;
   if (periodo === 'mes') {
-    expr = '`Mes`';
+    // OJO: la columna `Mes` asigna la catorcena por su FECHA DE INICIO, así que una
+    // catorcena que cruza meses (p.ej. Cat 20 = 29-sep → 12-oct) cae en el mes equivocado
+    // (septiembre) cuando QEB la cuenta en octubre. Asignamos por el PUNTO MEDIO de la
+    // catorcena (inicio + 7 días) → coincide con QEB. Sin fecha de periodo, cae a `Mes`.
+    expr = 'COALESCE(MONTH(DATE_ADD(`Fecha Ini Periodo`, INTERVAL 7 DAY)), `Mes`)';
   } else if (periodo === 'catorcena') {
     expr = "CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(`Periodo`,' ',-1),'-',1) AS UNSIGNED)";
     cond.push("`Periodo` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %'");
