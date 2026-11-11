@@ -1,4 +1,4 @@
-import { poolWrite, queryWrite } from '../db.js';
+import { getPoolWrite, queryWrite } from '../db';
 
 /**
  * Objetivos/metas del equipo, guardados en la BD propia ESCRIBIBLE (Hostinger).
@@ -14,15 +14,15 @@ export interface ObjetivosData {
 
 let listo = false;
 async function ensureTablas(): Promise<void> {
-  if (listo || !poolWrite) return;
-  await poolWrite.query(`CREATE TABLE IF NOT EXISTS objetivo_mensual (
+  if (listo || !getPoolWrite()) return;
+  await queryWrite(`CREATE TABLE IF NOT EXISTS objetivo_mensual (
     anio INT NOT NULL,
     mes TINYINT NOT NULL,
     monto DECIMAL(18,2) NOT NULL DEFAULT 0,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (anio, mes)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
-  await poolWrite.query(`CREATE TABLE IF NOT EXISTS objetivo_asesor (
+  await queryWrite(`CREATE TABLE IF NOT EXISTS objetivo_asesor (
     anio INT NOT NULL,
     asesor VARCHAR(191) NOT NULL,
     monto DECIMAL(18,2) NOT NULL DEFAULT 0,

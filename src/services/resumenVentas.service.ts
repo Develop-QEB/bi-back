@@ -1,11 +1,11 @@
-import { query } from '../db.js';
-import { env } from '../env.js';
-import { mapaPresupuesto } from './presupuesto.service.js';
-import { MESES_ES, type FiltrosResumen, type Kpi, type ResumenVentas } from '../types.js';
+import { query } from '../db';
+import { getBiConfig } from '../config';
+import { mapaPresupuesto } from './presupuesto.service';
+import { MESES_ES, type FiltrosResumen, type Kpi, type ResumenVentas } from '../types';
 
 /**
  * Agregaciones del Resumen de Ventas desde la vista QEB `V_APS_Globales` (SOLO SELECT).
- * "aps" = venta real (Monto Total). Definición de venta configurable con VENTA_DEF.
+ * "aps" = venta real (Monto Total). Definición de venta configurable con BI_VENTA_DEF.
  *
  * SUPUESTOS (ajustables contra el Power BI de IMU):
  *  - Mes/Catorcena: se toman de la columna `Mes` / `Periodo` (mes en que corre el periodo).
@@ -54,20 +54,23 @@ function where(anio: number, f: FiltrosResumen, opts: { conMes?: boolean } = {})
   // "Cliente" en el negocio = MARCA (APPLE, AEROMEXICO, SEARS…), no la razón social.
   if (f.cliente) { cond.push('`U_Marca` = :cliente'); params.cliente = f.cliente; }
   if (opts.conMes && f.mes) { cond.push('`Mes` = :mes'); params.mes = f.mes; }
-  if (env.ventaDef === 'VENTA') cond.push("`U_dscTAsig` = 'Venta'");
+  if (getBiConfig().ventaDef === 'VENTA') cond.push(`\`U_dscTAsig\` ${CO} = 'Venta'`);
   return { sql: cond.join(' AND '), params };
 }
 
 const MONTO = 'SUM(`Monto Total`)';
-// Mes de la catorcena por su PUNTO MEDIO (inicio + 7 días), no por su fecha de inicio.
-// La columna `Mes` usa la fecha de inicio → una catorcena que cruza meses (p.ej.
-// 29-sep→12-oct) cae en el mes equivocado. QEB la cuenta por donde caen más días.
-const MES_EXPR = 'COALESCE(MONTH(DATE_ADD(`Fecha Ini Periodo`, INTERVAL 7 DAY)), `Mes`)';
+// Mes de la catorcena por su FECHA DE FIN (no por la de inicio, que es lo que usa la
+// columna `Mes`). Una catorcena que cruza meses (p.ej. 29-sep→12-oct) la cuenta QEB en
+// el mes donde TERMINA (octubre). Validado vs QEB: Jun=103M y Sep=97M cuadran. Sin fecha
+// de periodo, cae a `Mes`.
+const MES_EXPR = 'COALESCE(MONTH(`Fecha Fin Periodo`), `Mes`)';
 
 async function ventasPorMes(anio: number, f: FiltrosResumen): Promise<Map<number, number>> {
   const w = where(anio, f);
   const rows = await query<{ mes: number; monto: string }>(
-    `SELECT ${MES_EXPR} mes, ${MONTO} monto FROM V_APS_Globales WHERE ${w.sql} GROUP BY mes`,
+    // OJO: GROUP BY por la EXPRESIÓN, no por el alias `mes` — el alias choca con la
+    // columna real `Mes` (MySQL ignora mayúsculas) y agruparía por el mes de INICIO.
+    `SELECT ${MES_EXPR} mes, ${MONTO} monto FROM V_APS_Globales WHERE ${w.sql} GROUP BY ${MES_EXPR}`,
     w.params
   );
   return new Map(rows.filter((r) => r.mes != null).map((r) => [Number(r.mes), Number(r.monto)]));
@@ -99,7 +102,7 @@ async function catorcenaMesMap(anio: number, f: FiltrosResumen): Promise<Map<num
             ${MES_EXPR} mes, COUNT(*) n
        FROM V_APS_Globales
       WHERE ${w.sql} AND \`Periodo\` COLLATE utf8mb4_unicode_ci LIKE 'CATORCENA %' AND \`Mes\` IS NOT NULL
-      GROUP BY catorcena, mes`,
+      GROUP BY CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(\`Periodo\`,' ',-1),'-',1) AS UNSIGNED), ${MES_EXPR}`,
     w.params
   );
   const best = new Map<number, { mes: number; n: number }>();

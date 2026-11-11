@@ -133,6 +133,9 @@ export interface EventoHistorial {
   // Flags de qué cambió realmente (para los chips y el filtro "Movimiento").
   cambioCaras?: boolean;
   cambioTarifa?: boolean;
+  // Periodo antes/después (QEB ya lo registra en el cambio "Período").
+  periodoAntes?: string | null;
+  periodoDespues?: string | null;
   // Eliminación ejecutada vía autorización (queda atribuida al gerente que autorizó).
   viaAutorizacion?: boolean;
   // Atributos EXACTOS de las caras editadas (solo en /reportes/impacto, filtros del jefe).
@@ -255,6 +258,14 @@ export interface FiltrosReporte {
   meses?: number[];        // 1–12
   catorcenas?: number[];   // número de catorcena
   semanas?: number[];      // semana ISO
+  // Filtros extra (Embudo, para igualar Variaciones): base, tipo, formato y vía.
+  bases?: string[];        // CIMU/TRADE/UDC (sap_database → columna BASE). Vacío = todas.
+  tipos?: string[];        // Tipo de artículo RT/BF/IN/IM. Vacío = todos (excluir IM = sin impresiones).
+  muebles?: string[];      // Formato: PARABUS/COLUMNA/MACRO (LIKE sobre Dscription/sc.formato). Vacío = todos.
+  digital?: string[];      // Tradicional/Digital (Tipo Digital / sc.tipo). Vacío = todos.
+  plazas?: string[];       // multi-selección de plaza (municipio). Vacío = todas. Sustituye a `plaza`.
+  clientes?: string[];     // multi-selección de cliente. Vacío = todos. Sustituye a `cliente`.
+  asesores?: string[];     // multi-selección de asesor. Vacío = todos. Sustituye a `asesor`.
 }
 
 /** Opciones para los dropdowns de la barra de filtros. */
@@ -281,6 +292,18 @@ export interface Ciclo {
   cicloTotalDias: number;
   conversionGlobalPct: number;
   total: number;
+}
+
+/** Propuestas generadas por mes y cuántas requieren autorización de la Dirección General. */
+export interface PropuestasAutMes {
+  mes: number;
+  etiqueta: string;
+  /** Propuestas creadas en el mes (área Comercial). */
+  propuestas: number;
+  /** De esas, cuántas tienen tarea de autorización DG. */
+  conDG: number;
+  /** % que requieren autorización DG. */
+  pctDG: number;
 }
 
 /** Fila de "Detalle de campañas". */

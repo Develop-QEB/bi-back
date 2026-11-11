@@ -1,6 +1,6 @@
-import { query } from '../db.js';
-import { normalizaAsesor } from '../lib/asesores.js';
-import { normalizaPlaza } from '../lib/plazas.js';
+import { query } from '../db';
+import { normalizaAsesor } from '../lib/asesores';
+import { normalizaPlaza } from '../lib/plazas';
 import type {
   CategoriaAccion,
   ConteoNombre,
@@ -10,7 +10,7 @@ import type {
   Impacto,
   PuntoActividad,
   ResumenHistorial,
-} from '../types.js';
+} from '../types';
 
 /**
  * Lee y normaliza la tabla `historial` (historial de acciones) — SOLO SELECT.
@@ -86,6 +86,8 @@ export function parseEvento(row: RowEvento): EventoHistorial {
   let tarifaDespues: number | null = null;
   let cambioCaras = false;                  // cambió el # de caras
   let cambioTarifa = false;                 // cambió la tarifa pública (distinto de que cambie la inversión)
+  let periodoAntes: string | null = null;   // periodo antes/después (QEB ya lo registra en el cambio "Período")
+  let periodoDespues: string | null = null;
 
   let json: any = null;
   const raw = row.detalles ?? '';
@@ -122,11 +124,20 @@ export function parseEvento(row: RowEvento): EventoHistorial {
       if (ids.length) caraIds = [...new Set([...(caraIds ?? []), ...ids])];
     }
 
-    // Circuitos (eliminación de reservas / de circuito desde campaña): trae articulo + formato.
-    if (Array.isArray(json.circuitos)) {
+    // Circuitos (eliminación de circuito desde campaña, típicamente VÍA AUTORIZACIÓN):
+    // trae articulo/formato + caras + inversión por circuito. Sumamos caras/inversión en
+    // negativo para que la eliminación aprobada SÍ pese en Variaciones (antes salía en $0).
+    if (Array.isArray(json.circuitos) && json.circuitos.length) {
+      let cC = 0, mC = 0;
       for (const c of json.circuitos) {
         if (c?.articulo) articuloSet.add(String(c.articulo).trim());
         if (c?.formato && !formatoDetalle) formatoDetalle = String(c.formato).trim();
+        cC += num(c?.caras);
+        mC += num(c?.inversion);
+      }
+      if (!tieneCarasElim) {
+        if (cC > 0) caras = -Math.abs(cC);
+        if (mC > 0) monto = -Math.abs(mC);
       }
     }
 
@@ -157,6 +168,16 @@ export function parseEvento(row: RowEvento): EventoHistorial {
           // OJO: el back de QEB escribe el campo como "Período" (con acento í), así que
           // el patrón debe aceptar i/í o no detecta los cambios de periodo.
           cambioPeriodo = true;
+          // QEB ya guarda el antes/después real (p.ej. "2026-10-13 – 2026-11-09"). Tomamos
+          // el primer par con valores reales (ignora el viejo placeholder "modificado").
+          if (periodoAntes == null && periodoDespues == null) {
+            const a = c?.antes != null ? String(c.antes).trim() : '';
+            const d = c?.despues != null ? String(c.despues).trim() : '';
+            if ((a && a.toLowerCase() !== 'modificado') || (d && d.toLowerCase() !== 'modificado')) {
+              periodoAntes = a || null;
+              periodoDespues = d || null;
+            }
+          }
         } else if (/tarifa/.test(campo) || /tarifa/.test(label)) {
           // Tarifa pública (precio unitario). Tomamos el primer par como representativo
           // y marcamos cambioTarifa solo si de verdad cambió (antes ≠ después).
@@ -235,6 +256,8 @@ export function parseEvento(row: RowEvento): EventoHistorial {
     tarifaDespues,
     cambioCaras,
     cambioTarifa,
+    periodoAntes,
+    periodoDespues,
     viaAutorizacion: !!(json && typeof json === 'object' && json.via === 'autorización'),
     tipoEdicion,
   };
@@ -542,10 +565,37 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
     for (const r of apsRows) apsSet.add(Number(r.cid));
   }
 
+  // Cambio de periodo = TRASLADO: la inversión no cambia, solo se mueve de catorcena.
+  // Mostramos el "monto trasladado" = inversión total de la campaña (SUM solicitudCaras.costo),
+  // con antes = después (neutral). QEB no registra $ en estos eventos, así que lo derivamos aquí.
+  const quotesPeriodo = [
+    ...new Set(
+      eventos
+        .filter((e) => e.tipoEdicion === 'Cambio de periodo' && e.invAntes == null)
+        .map((e) => quoteDe(e.refId))
+        .filter((n): n is number => n != null)
+    ),
+  ];
+  const trasladoMap = new Map<number, number>();
+  if (quotesPeriodo.length) {
+    const costoRows = await query<{ q: number; total: number | null }>(
+      `SELECT CAST(idquote AS UNSIGNED) AS q, SUM(costo) AS total
+         FROM solicitudCaras
+        WHERE idquote IN (${quotesPeriodo.join(',')})
+        GROUP BY CAST(idquote AS UNSIGNED)`
+    );
+    for (const r of costoRows) if (r.total != null) trasladoMap.set(Number(r.q), Number(r.total));
+  }
+
   for (const e of eventos) {
     const q = quoteDe(e.refId);
     const p = q != null ? propMap.get(q) : undefined;
     if (p) { e.cliente = p.cliente; e.asesor = p.asesor; e.marca = p.marca; e.status = p.status; e.base = p.base; }
+    // Cambio de periodo: la inversión se traslada, no varía → antes = después = total de la campaña.
+    if (e.tipoEdicion === 'Cambio de periodo' && e.invAntes == null && q != null) {
+      const t = trasladoMap.get(q);
+      if (t != null) { e.invAntes = t; e.invDespues = t; }
+    }
     // Posteado = alguna cara editada ya tiene APS asignado.
     e.tieneAps = (e.caraIds ?? []).some((id) => apsSet.has(id));
     // Unión de atributos sobre las caras realmente editadas.
@@ -561,6 +611,85 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
     e.formatos = [...formatos];
     e.muebles = [...muebles];
   }
+}
+
+/**
+ * Campañas COMPLETAMENTE rechazadas o canceladas (campania.status), NO los eventos
+ * de rechazo de autorización (esos son "quién picó rechazar" y pueden revertirse).
+ * Una fila por campaña, con su inversión perdida y sus caras, para el filtro
+ * "Rechazadas" de Variaciones. La fecha es `fecha_inicio` (el período al que
+ * pertenecía la campaña), que es estable; `updated_at` se tocó en lote y no sirve.
+ * Se enriquecen (cliente/asesor/plaza/formato) igual que las ediciones, vía refId→caras.
+ */
+async function getCampaniasRechazadas(desde: string, hasta: string): Promise<EventoHistorial[]> {
+  const rows = await query<{
+    id: number;
+    nombre: string | null;
+    status: string | null;
+    total_caras: number | null;
+    inversion: string | null;
+    fecha: string | null;
+    cotizacion_id: number | null;
+  }>(
+    `SELECT cam.id, cam.nombre, cam.status, cam.total_caras,
+            p.inversion, cam.cotizacion_id,
+            COALESCE(cam.fecha_inicio, cam.updated_at) AS fecha
+       FROM campania cam
+       LEFT JOIN propuesta p ON p.id = cam.cotizacion_id
+      WHERE cam.status IN ('Rechazada', 'Cancelada')
+        AND COALESCE(cam.fecha_inicio, cam.updated_at) >= :desde
+        AND COALESCE(cam.fecha_inicio, cam.updated_at) < :hasta`,
+    { desde, hasta }
+  );
+  if (!rows.length) return [];
+
+  // caraIds por campaña (solicitudCaras.idquote = cotizacion_id) → plaza/formato/mueble.
+  const quotes = [...new Set(rows.map((r) => Number(r.cotizacion_id)).filter((n) => Number.isFinite(n) && n > 0))];
+  const carasPorQuote = new Map<number, number[]>();
+  if (quotes.length) {
+    const sc = await query<{ q: number; id: number }>(
+      `SELECT CAST(idquote AS UNSIGNED) AS q, id FROM solicitudCaras WHERE idquote IN (${quotes.join(',')})`
+    );
+    for (const r of sc) {
+      const q = Number(r.q);
+      if (!carasPorQuote.has(q)) carasPorQuote.set(q, []);
+      carasPorQuote.get(q)!.push(Number(r.id));
+    }
+  }
+
+  return rows.map((r) => {
+    const inv = num(r.inversion);
+    const caras = Math.abs(num(r.total_caras));
+    const cancel = (r.status || '').toLowerCase().includes('cancel');
+    return {
+      // id sintético con offset grande: no choca con historial.id ni rompe el key del front.
+      id: 900_000_000 + Number(r.id),
+      fecha: r.fecha ? new Date(r.fecha).toISOString() : new Date().toISOString(),
+      tipo: 'Campaña',
+      accion: cancel ? 'Campaña cancelada' : 'Campaña rechazada',
+      categoria: 'rechazo',
+      usuario: null,
+      refId: Number(r.id),
+      campania: r.nombre ?? null,
+      // Caras NEGATIVAS (es una baja): el front muestra el valor absoluto ("N caras rechazadas"),
+      // pero así el `signo()` las trata como baja aunque la inversión sea 0.
+      caras: -caras,
+      // Inversión perdida, en negativo (pesa como baja en Variaciones).
+      monto: inv > 0 ? -inv : 0,
+      estadoAntes: null,
+      estadoDespues: r.status ?? null,
+      carasAntes: null,
+      carasDespues: null,
+      // Inversión antes→después: $X → $0 (la campaña valía X y se cayó a 0).
+      invAntes: inv > 0 ? inv : null,
+      invDespues: inv > 0 ? 0 : null,
+      descripcion: `${r.nombre ?? 'Campaña'} — ${r.status ?? 'Rechazada'}`,
+      tipoEdicion: 'Rechazo',
+      caraIds: carasPorQuote.get(Number(r.cotizacion_id)) ?? [],
+      cambioCaras: false,
+      cambioTarifa: false,
+    } as EventoHistorial;
+  });
 }
 
 /**
@@ -596,28 +725,34 @@ export async function getImpacto(
   );
   // Mantenemos: ediciones con $ + eliminaciones de circuito completo + cambios de
   // periodo (estos dos pueden no mover $ pero se quieren ver en el historial/filtro rápido).
-  const eventos = rows
+  const edicionesLog = rows
     .map(parseEvento)
-    // Ocultar eliminaciones ejecutadas VÍA AUTORIZACIÓN: el detalle las atribuye al gerente
-    // que autorizó (no a quien la solicitó/hizo) y no traen $ → sólo generan ruido en el impacto.
-    .filter((e) => !(e.tipoEdicion === 'Eliminar circuito' && e.viaAutorizacion))
+    // Las eliminaciones de circuito aprobadas VÍA AUTORIZACIÓN SÍ se muestran: el detalle trae
+    // a quien la solicitó en `usuario` (y el gerente en `autorizadoPor`) + caras/inversión en
+    // `circuitos[]`, así que reflejan la baja real ("cuando se aprueba se refleje").
     .filter((e) => (e.monto != null && e.monto !== 0) || e.tipoEdicion === 'Eliminar circuito' || e.tipoEdicion === 'Cambio de periodo');
-  await enriquecerCampanias(eventos);
 
-  const total = eventos.reduce((a, e) => a + (e.monto ?? 0), 0);
-  const promedio = eventos.length ? total / eventos.length : 0;
+  // "Rechazadas" = campañas con estatus final Rechazada/Cancelada (campania.status),
+  // NO eventos de rechazo de autorización. El front las aísla al filtro "Rechazadas".
+  const rechazadas = await getCampaniasRechazadas(desde, hasta);
+
+  // Capamos SOLO las ediciones del log (pueden ser miles); las rechazadas (pocas)
+  // SIEMPRE entran completas — si no, el slice las dejaría fuera y el filtro saldría vacío.
+  const ediciones = [...edicionesLog.slice(0, 2000), ...rechazadas];
+  await enriquecerCampanias(ediciones);
+
+  const total = ediciones.reduce((a, e) => a + (e.monto ?? 0), 0);
+  const promedio = ediciones.length ? total / ediciones.length : 0;
   let mayor: EventoHistorial | null = null;
-  for (const e of eventos) if (!mayor || Math.abs(e.monto ?? 0) > Math.abs(mayor.monto ?? 0)) mayor = e;
+  for (const e of ediciones) if (!mayor || Math.abs(e.monto ?? 0) > Math.abs(mayor.monto ?? 0)) mayor = e;
 
-  // Devolvemos y enriquecemos hasta 1000 ediciones (para que los filtros del año
-  // tengan todo el universo). El enriquecido corre 2 queries batch (~1–2s).
-  const ediciones = eventos.slice(0, 2000);
+  // Enriquecemos atributos (plaza/formato/cliente/asesor) de TODAS las ediciones devueltas.
   await enriquecerAtributos(ediciones);
 
   return {
     total,
     promedio,
-    count: eventos.length,
+    count: ediciones.length,
     mayor,
     puntos: ediciones.map((e) => ({ monto: e.monto ?? 0, caras: e.caras, campania: e.campania, usuario: e.usuario, fecha: e.fecha })),
     ediciones,
