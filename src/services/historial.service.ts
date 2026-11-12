@@ -27,6 +27,28 @@ const num = (v: unknown): number => {
 const toISO = (v: unknown): string =>
   v instanceof Date ? v.toISOString() : new Date(String(v)).toISOString();
 
+// Plaza aproximada por el SUFIJO del código de artículo (último segmento), p.ej.
+// RT-P1-COB-GD → Guadalajara. Último recurso para eliminaciones vía autorización cuyas
+// caras ya fueron borradas de solicitudCaras (no queda de dónde leer la plaza exacta).
+// SOLO sufijos REGIONALES inequívocos (verificados vs solicitudCaras.estados): los de
+// COBERTURA (MX/MY/PB/PV/…) abarcan varias plazas o están sucios → NO se adivinan (vacío).
+const PLAZA_POR_SUFIJO: Record<string, string> = {
+  GD: 'Guadalajara', GDL: 'Guadalajara',
+  MR: 'Mérida',
+  TJ: 'Tijuana',
+  PH: 'Pachuca',
+  LE: 'León',
+  OX: 'Oaxaca',
+  VR: 'Veracruz',
+  SLP: 'San Luis Potosí',
+  AGS: 'Aguascalientes',
+};
+function plazaDeArticulo(art: string | null | undefined): string | null {
+  if (!art) return null;
+  const suf = String(art).trim().toUpperCase().split('-').pop() ?? '';
+  return PLAZA_POR_SUFIJO[suf] ?? null;
+}
+
 function categorizar(tipo: string, accion: string): CategoriaAccion {
   const t = (tipo || '').toLowerCase();
   const a = (accion || '').toLowerCase();
@@ -194,6 +216,12 @@ export function parseEvento(row: RowEvento): EventoHistorial {
       }
       // "Edición de tarifa" = cambió la tarifa PÚBLICA (no cualquier cambio de inversión).
       hayTarifaEdit = cambioTarifa;
+    }
+    // Cambio de periodo "fantasma": el campo Período se reescribió pero las fechas NO
+    // cambiaron (antes === después). No es un movimiento real → no lo marcamos como
+    // "Cambio de periodo" (Jos: "si son las mismas fechas ¿dónde está el cambio?").
+    if (cambioPeriodo && periodoAntes != null && periodoAntes === periodoDespues) {
+      cambioPeriodo = false;
     }
     descripcion = describir(json, row, categoria, caras, campania, estadoAntes, estadoDespues);
   } else {
@@ -555,6 +583,31 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
     }
   }
 
+  // Fallback de PLAZA para eventos SIN caraIds exactos (eliminación vía autorización: el
+  // detalle trae `circuitos[]` pero no el id de solicitudCaras, así que la plaza salía vacía).
+  // Tomamos la(s) plaza(s) de TODA la campaña (idquote) — igual que las Rechazadas — para no
+  // dejar la columna Plaza vacía. Solo plaza; el formato ya viene del detalle (formatoDetalle).
+  const quotesFallback = [
+    ...new Set(
+      eventos
+        .filter((e) => !(e.caraIds?.length))
+        .map((e) => quoteDe(e.refId))
+        .filter((n): n is number => n != null)
+    ),
+  ];
+  const quotePlazas = new Map<number, Set<string>>();
+  if (quotesFallback.length) {
+    const qRows = await query<{ q: number; estados: string | null }>(
+      `SELECT CAST(idquote AS UNSIGNED) q, estados FROM solicitudCaras WHERE idquote IN (${quotesFallback.join(',')})`
+    );
+    for (const r of qRows) {
+      const q = Number(r.q);
+      const set = quotePlazas.get(q) ?? new Set<string>();
+      normalizaPlaza(r.estados).forEach((x) => set.add(x));
+      quotePlazas.set(q, set);
+    }
+  }
+
   // ¿Qué caras ya tienen APS asignado? (posteado). reservas.APS no nulo, viva.
   const apsSet = new Set<number>();
   if (caraIds.length) {
@@ -607,6 +660,15 @@ async function enriquecerAtributos(eventos: EventoHistorial[]): Promise<void> {
       a.formatos.forEach((x) => formatos.add(x));
       a.muebles.forEach((x) => muebles.add(x));
     }
+    // Sin caras exactas (eliminación vía autorización) → plaza de la campaña completa.
+    if (!plazas.size) {
+      const qf = quoteDe(e.refId);
+      if (qf != null) quotePlazas.get(qf)?.forEach((x) => plazas.add(x));
+    }
+    // Último recurso: la plaza del código de artículo (las caras eliminadas ya no existen).
+    if (!plazas.size && e.articulos?.length) {
+      for (const art of e.articulos) { const pl = plazaDeArticulo(art); if (pl) plazas.add(pl); }
+    }
     e.plazas = [...plazas];
     e.formatos = [...formatos];
     e.muebles = [...muebles];
@@ -657,6 +719,36 @@ async function getCampaniasRechazadas(desde: string, hasta: string): Promise<Eve
     }
   }
 
+  // Quién RECHAZÓ/CANCELÓ: `campania` no guarda al usuario, así que sale del evento de
+  // historial "Cambio de estado" que dejó el estatus en Rechazada/Cancelada (json.usuario).
+  // Se busca por la campaña (ref_id = id, tipo 'Campaña') y por su propuesta (ref_id =
+  // cotizacion_id, tipo 'Propuesta'); el evento MÁS RECIENTE gana (ORDER BY id DESC).
+  const campIds = [...new Set(rows.map((r) => Number(r.id)).filter((n) => Number.isFinite(n) && n > 0))];
+  const cotizIds = [...new Set(rows.map((r) => Number(r.cotizacion_id)).filter((n) => Number.isFinite(n) && n > 0))];
+  const refIdsRech = [...new Set([...campIds, ...cotizIds])];
+  const usuarioCamp = new Map<number, string>();
+  const usuarioProp = new Map<number, string>();
+  if (refIdsRech.length) {
+    const uRows = await query<{ ref_id: number; tipo: string; usuario: string | null }>(
+      `SELECT h.ref_id, h.tipo,
+              JSON_UNQUOTE(JSON_EXTRACT(h.detalles,'$.usuario')) AS usuario
+         FROM historial h
+        WHERE h.accion = 'Cambio de estado'
+          AND h.tipo IN ('Campaña','Propuesta')
+          AND h.ref_id IN (${refIdsRech.join(',')})
+          AND JSON_VALID(h.detalles)
+          AND (h.detalles LIKE '%"despues":"Rechazada"%' OR h.detalles LIKE '%"despues":"Cancelada"%')
+        ORDER BY h.id DESC`
+    );
+    for (const u of uRows) {
+      const nombre = u.usuario ? String(u.usuario).trim() : '';
+      if (!nombre) continue;
+      const ref = Number(u.ref_id);
+      const map = u.tipo === 'Campaña' ? usuarioCamp : usuarioProp;
+      if (!map.has(ref)) map.set(ref, nombre); // el primero es el más reciente
+    }
+  }
+
   return rows.map((r) => {
     const inv = num(r.inversion);
     const caras = Math.abs(num(r.total_caras));
@@ -668,7 +760,7 @@ async function getCampaniasRechazadas(desde: string, hasta: string): Promise<Eve
       tipo: 'Campaña',
       accion: cancel ? 'Campaña cancelada' : 'Campaña rechazada',
       categoria: 'rechazo',
-      usuario: null,
+      usuario: usuarioCamp.get(Number(r.id)) ?? usuarioProp.get(Number(r.cotizacion_id)) ?? null,
       refId: Number(r.id),
       campania: r.nombre ?? null,
       // Caras NEGATIVAS (es una baja): el front muestra el valor absoluto ("N caras rechazadas"),
@@ -730,7 +822,12 @@ export async function getImpacto(
     // Las eliminaciones de circuito aprobadas VÍA AUTORIZACIÓN SÍ se muestran: el detalle trae
     // a quien la solicitó en `usuario` (y el gerente en `autorizadoPor`) + caras/inversión en
     // `circuitos[]`, así que reflejan la baja real ("cuando se aprueba se refleje").
-    .filter((e) => (e.monto != null && e.monto !== 0) || e.tipoEdicion === 'Eliminar circuito' || e.tipoEdicion === 'Cambio de periodo');
+    // PERO el EVENTO de autorización en sí NO es un movimiento: trae los mismos `circuitos[]`
+    // (mismo $) que la eliminación pareja → duplicaba el impacto y salía como "Autorización".
+    // Jos: aquí no debe aparecer nada de autorizaciones. La baja real ya está en el evento
+    // "Eliminar circuito" (con el solicitante y el monto). Así que excluimos las autorizaciones.
+    .filter((e) => e.categoria !== 'autorizacion'
+      && ((e.monto != null && e.monto !== 0) || e.tipoEdicion === 'Eliminar circuito' || e.tipoEdicion === 'Cambio de periodo'));
 
   // "Rechazadas" = campañas con estatus final Rechazada/Cancelada (campania.status),
   // NO eventos de rechazo de autorización. El front las aísla al filtro "Rechazadas".

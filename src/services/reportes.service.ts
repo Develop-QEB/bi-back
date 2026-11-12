@@ -193,7 +193,7 @@ export async function getCiclo(f: FiltrosReporte): Promise<Ciclo> {
   return {
     etapas: [
       { de: 'Solicitud', a: 'Propuesta', dias: solProp },
-      { de: 'Propuesta', a: 'Aprobación', dias: propAprob },
+      { de: 'Propuesta', a: 'Campaña', dias: propAprob },
     ],
     cicloTotalDias: Math.round((solProp + propAprob) * 10) / 10,
     conversionGlobalPct: total ? Math.round((aprobadas / total) * 1000) / 10 : 0,

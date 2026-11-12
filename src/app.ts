@@ -179,7 +179,7 @@ app.get('/', (_req, res) =>
     service: 'bi-back',
     ok: true,
     // Sello para verificar qué build está vivo en prod (abrir <url>/bi/ ).
-    version: '2026-11-10-rechazo-elim-autdg',
+    version: '2026-11-12-variaciones-jos-fixes',
     ventaDef: getBiConfig().ventaDef,          // 'VENTA' = Embudo/Variaciones cuentan solo U_dscTAsig='Venta' (igual que BI)
     mesRule: 'fecha_fin',                       // mes de la catorcena por Fecha Fin Periodo
     endpoints: ['/health', '/resumen-ventas', '/asesores', '/clientes', '/anios', '/presupuesto', '/historial/eventos', '/historial/resumen', 'ws:/ws/historial'],
